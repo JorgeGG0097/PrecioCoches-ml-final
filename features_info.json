@@ -1,0 +1,19 @@
+{
+  "variables_numericas": [
+    "año",
+    "potencia_cv",
+    "kilometraje_km",
+    "antiguedad",
+    "km_por_año"
+  ],
+  "variables_categoricas": [
+    "marca",
+    "modelo",
+    "combustible",
+    "transmision",
+    "etiqueta_ambiental",
+    "tipo_venta"
+  ],
+  "año_actual": 2026,
+  "mae_test": 1732
+}

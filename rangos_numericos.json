@@ -1,0 +1,17 @@
+{
+  "año": {
+    "min": 1995,
+    "max": 2026,
+    "median": 2022
+  },
+  "potencia_cv": {
+    "min": 1,
+    "max": 809,
+    "median": 90
+  },
+  "kilometraje_km": {
+    "min": 0,
+    "max": 497000,
+    "median": 70000
+  }
+}
