@@ -343,13 +343,15 @@ SECCIONES = [
 
 if "seccion_idx" not in st.session_state:
     st.session_state["seccion_idx"] = 0
+if "_nav_radio" not in st.session_state:
+    st.session_state["_nav_radio"] = SECCIONES[0]
 
 
 # ── Navegación superior ────────────────────────────────────────────────────────
 seccion = st.radio(
     "nav",
     SECCIONES,
-    index=st.session_state["seccion_idx"],
+    key="_nav_radio",
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -468,6 +470,7 @@ if seccion == SECCIONES[0]:
         """, unsafe_allow_html=True)
         if st.button("Ir al Tasador de precio", key="btn_sec1", use_container_width=True, type="primary"):
             st.session_state["seccion_idx"] = 1
+            st.session_state["_nav_radio"] = SECCIONES[1]
             st.rerun()
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -482,6 +485,7 @@ if seccion == SECCIONES[0]:
         """, unsafe_allow_html=True)
         if st.button("Analizar depreciación", key="btn_sec3", use_container_width=True, type="primary"):
             st.session_state["seccion_idx"] = 3
+            st.session_state["_nav_radio"] = SECCIONES[3]
             st.rerun()
 
     with col_b:
@@ -495,6 +499,7 @@ if seccion == SECCIONES[0]:
         """, unsafe_allow_html=True)
         if st.button("Explorar por presupuesto", key="btn_sec2", use_container_width=True, type="primary"):
             st.session_state["seccion_idx"] = 2
+            st.session_state["_nav_radio"] = SECCIONES[2]
             st.rerun()
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -509,6 +514,7 @@ if seccion == SECCIONES[0]:
         """, unsafe_allow_html=True)
         if st.button("Ver relación entre características", key="btn_sec4", use_container_width=True, type="primary"):
             st.session_state["seccion_idx"] = 4
+            st.session_state["_nav_radio"] = SECCIONES[4]
             st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
