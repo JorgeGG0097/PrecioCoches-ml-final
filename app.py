@@ -828,40 +828,6 @@ elif seccion == SECCIONES[2]:
                 fig.update_layout(title=f"Oferta entre {p_min_u:,} € y {p_max_u:,} €")
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Mejor relación variable/precio
-                st.markdown("#### Mejor relación con el precio")
-                opcion_rel = st.radio(
-                    "Variable a comparar:",
-                    ["CV por 1.000 €", "Km medios", "Año medio"],
-                    horizontal=True,
-                    key="radio_relacion_precio"
-                )
-                filtrado2 = filtrado.copy()
-                if opcion_rel == "CV por 1.000 €":
-                    filtrado2["_metrica"] = (filtrado2["potencia_cv"] / filtrado2["precio_eur"] * 1000).round(1)
-                    col_label = "CV por 1.000 €"
-                    hover_fmt = "%{x:.1f} CV/1.000 €"
-                    ascending = False
-                elif opcion_rel == "Km medios":
-                    filtrado2["_metrica"] = filtrado2["kilometraje_km"]
-                    col_label = "Km medios"
-                    hover_fmt = "%{x:,.0f} km"
-                    ascending = True
-                else:
-                    filtrado2["_metrica"] = filtrado2["año"]
-                    col_label = "Año medio"
-                    hover_fmt = "%{x:.0f}"
-                    ascending = False
-                mejores = (filtrado2.groupby("marca")["_metrica"]
-                           .mean().sort_values(ascending=ascending).head(8).reset_index())
-                mejores.columns = ["Marca", col_label]
-                fig2 = px.bar(mejores.sort_values(col_label, ascending=not ascending),
-                              x=col_label, y="Marca",
-                              orientation="h", color_discrete_sequence=[VERDE])
-                fig2.update_traces(hovertemplate=f"<b>%{{y}}</b><br>{hover_fmt}<extra></extra>")
-                estilo_fig(fig2, height=320)
-                st.plotly_chart(fig2, use_container_width=True)
-
                 # Configuraciones típicas
                 st.markdown("#### Configuraciones más habituales")
                 config = (
