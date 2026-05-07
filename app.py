@@ -410,6 +410,239 @@ def generar_explicacion(df_data, var_x, var_y, tipo_x):
         return base + CONTEXTOS_NUM.get((var_x, var_y), CONTEXTOS_NUM.get((var_y, var_x), ""))
 
 
+# ── Generador de PDF de tasación ──────────────────────────────────────────────
+def _generar_pdf_tasacion(
+    marca, modelo, año, km, cv, combustible, transmision,
+    etiqueta, tipo_venta, precio, p_min, p_max, pct_intervalo,
+    diff, signo, mae,
+    edades_rng, precios_edad, ant,
+    km_rng, precios_km_suave, km_sel,
+    tabla_sim,
+):
+    import io, matplotlib, matplotlib.pyplot as plt
+    from fpdf import FPDF
+    from datetime import datetime
+    matplotlib.use("Agg")
+
+    # ── Gráfico 1: depreciación ────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(8, 3.6))
+    band_hi = [p * (1 + MAPE_FACTOR) for p in precios_edad]
+    band_lo = [p * (1 - MAPE_FACTOR) for p in precios_edad]
+    ax.fill_between(edades_rng, band_lo, band_hi, alpha=0.15, color="#0070f3")
+    ax.plot(edades_rng, precios_edad, color="#0070f3", linewidth=2.2)
+    ax.axvline(x=ant, color="#00c072", linestyle="--", linewidth=1.5,
+               label=f"Tu vehiculo ({ant} anos)")
+    ax.set_xlabel("Antiguedad (anos)"); ax.set_ylabel("Precio estimado (EUR)")
+    ax.set_title("Depreciacion segun la antiguedad")
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+    ax.legend(fontsize=9); ax.grid(True, alpha=0.25)
+    plt.tight_layout()
+    buf1 = io.BytesIO(); fig.savefig(buf1, format="png", dpi=130); plt.close(); buf1.seek(0)
+
+    # ── Gráfico 2: impacto km ─────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(8, 3.6))
+    ax.plot([k / 1000 for k in km_rng], precios_km_suave, color="#f59e0b", linewidth=2.2)
+    ax.axvline(x=km_sel / 1000, color="#00c072", linestyle="--", linewidth=1.5,
+               label=f"{km_sel:,} km")
+    ax.set_xlabel("Kilometraje (miles de km)"); ax.set_ylabel("Precio estimado (EUR)")
+    ax.set_title("Impacto del kilometraje en el precio")
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+    ax.legend(fontsize=9); ax.grid(True, alpha=0.25)
+    plt.tight_layout()
+    buf2 = io.BytesIO(); fig.savefig(buf2, format="png", dpi=130); plt.close(); buf2.seek(0)
+
+    # ── Construcción del PDF ───────────────────────────────────────────────────
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=14)
+    AZUL_PDF = (0, 112, 243); GRIS_PDF = (100, 116, 139); NEGRO = (17, 24, 39)
+
+    def cabecera():
+        pdf.set_fill_color(*AZUL_PDF)
+        pdf.rect(0, 0, 210, 14, "F")
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_xy(10, 3)
+        pdf.cell(0, 8, "PrecioCoches ML  |  Tasacion de vehiculo", ln=False)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_xy(0, 3)
+        pdf.cell(200, 8, datetime.now().strftime("%d/%m/%Y"), align="R")
+        pdf.set_text_color(*NEGRO)
+
+    def pie():
+        pdf.set_y(-12)
+        pdf.set_font("Helvetica", "I", 7.5)
+        pdf.set_text_color(*GRIS_PDF)
+        pdf.cell(0, 5,
+            "Estimacion generada por modelo de ML (GBM). No constituye una tasacion oficial. "
+            "Verificar siempre el estado real del vehiculo antes de cualquier decision de compra.",
+            align="C")
+        pdf.set_text_color(*NEGRO)
+
+    # ── PAGINA 1 — Resumen ─────────────────────────────────────────────────────
+    pdf.add_page()
+    cabecera()
+
+    # Titulo seccion
+    pdf.set_xy(10, 18)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(*AZUL_PDF)
+    pdf.cell(0, 8, "Resumen de la tasacion", ln=True)
+    pdf.set_text_color(*NEGRO)
+
+    # Datos del vehiculo — caja gris
+    pdf.set_xy(10, 28)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(*GRIS_PDF)
+    pdf.cell(0, 5, "DATOS DEL VEHICULO", ln=True)
+    pdf.set_text_color(*NEGRO)
+
+    pdf.set_fill_color(249, 250, 251)
+    pdf.set_draw_color(229, 231, 235)
+    pdf.rect(10, 34, 190, 36, "FD")
+
+    datos = [
+        ("Marca / Modelo", f"{marca}  {modelo}"),
+        ("Ano de fabricacion", str(año)),
+        ("Kilometraje", f"{km:,} km"),
+        ("Potencia", f"{cv} CV"),
+        ("Combustible", combustible),
+        ("Transmision", transmision),
+        ("Tipo de venta", tipo_venta),
+        ("Etiqueta DGT", etiqueta.replace("_", " ")),
+    ]
+    col_w = 95
+    for i, (k, v) in enumerate(datos):
+        col = i % 2
+        row = i // 2
+        x = 14 + col * col_w
+        y = 36 + row * 8.5
+        pdf.set_font("Helvetica", "B", 8.5); pdf.set_xy(x, y)
+        pdf.cell(40, 6, k + ":", ln=False)
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.cell(col_w - 42, 6, v, ln=False)
+
+    # Precio estimado — caja azul
+    pdf.set_xy(10, 74)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(*GRIS_PDF)
+    pdf.cell(0, 5, "PRECIO ESTIMADO DE MERCADO", ln=True)
+    pdf.set_text_color(*NEGRO)
+
+    pdf.set_fill_color(239, 246, 255)
+    pdf.set_draw_color(*AZUL_PDF)
+    pdf.rect(10, 80, 190, 28, "FD")
+
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.set_text_color(*AZUL_PDF)
+    pdf.set_xy(10, 82)
+    pdf.cell(190, 12, f"{precio:,.0f} EUR", align="C", ln=True)
+
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(*GRIS_PDF)
+    pdf.set_xy(10, 95)
+    pdf.cell(190, 6,
+        f"Intervalo de mercado: {p_min:,.0f} EUR  -  {p_max:,.0f} EUR   (+/-{pct_intervalo}%)",
+        align="C", ln=True)
+
+    signo_es = "por encima" if diff >= 0 else "por debajo"
+    pdf.set_xy(10, 101)
+    pdf.cell(190, 6,
+        f"{'+'if diff>=0 else ''}{diff:,.0f} EUR {signo_es} de la mediana de {marca}",
+        align="C", ln=True)
+    pdf.set_text_color(*NEGRO)
+
+    # Fiabilidad del modelo
+    pdf.set_xy(10, 113)
+    pdf.set_fill_color(240, 253, 244)
+    pdf.set_draw_color(134, 239, 172)
+    pdf.rect(10, 113, 190, 14, "FD")
+    pdf.set_font("Helvetica", "B", 8.5)
+    pdf.set_xy(10, 115)
+    pdf.cell(190, 5, "Fiabilidad del modelo:", align="C", ln=True)
+    pdf.set_font("Helvetica", "", 8.5)
+    pdf.set_text_color(*GRIS_PDF)
+    pdf.cell(190, 5,
+        f"Algoritmo GBM (HistGradientBoosting)  |  R2 = 0.941  |  MAE = +/-{mae:,} EUR  |  Entrenado con 80.528 anuncios",
+        align="C", ln=True)
+    pdf.set_text_color(*NEGRO)
+
+    # Tabla coches similares
+    if tabla_sim is not None and len(tabla_sim) > 0:
+        pdf.set_xy(10, 132)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(*GRIS_PDF)
+        pdf.cell(0, 5, "COCHES SIMILARES EN EL DATASET", ln=True)
+        pdf.set_text_color(*NEGRO)
+        pdf.ln(1)
+
+        headers = ["Ano", "Km", "CV", "Combustible", "Precio real", "vs. estimado"]
+        col_ws  = [16,    30,   16,   38,             30,             30]
+        pdf.set_fill_color(*AZUL_PDF); pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 7.5)
+        for h, w in zip(headers, col_ws):
+            pdf.cell(w, 6, h, border=1, fill=True)
+        pdf.ln()
+
+        pdf.set_text_color(*NEGRO); pdf.set_font("Helvetica", "", 7.5)
+        fill = False
+        for _, row in tabla_sim.head(8).iterrows():
+            pdf.set_fill_color(249, 250, 251) if fill else pdf.set_fill_color(255, 255, 255)
+            vals = [str(row.get("Ano", row.get("año",""))),
+                    str(row.get("Km", row.get("kilometraje_km",""))),
+                    str(row.get("CV", row.get("potencia_cv",""))),
+                    str(row.get("Combustible", row.get("combustible",""))),
+                    str(row.get("Precio real", row.get("precio_eur",""))),
+                    str(row.get("vs. estimado",""))]
+            for v, w in zip(vals, col_ws):
+                pdf.cell(w, 5.5, v[:20], border=1, fill=True)
+            pdf.ln(); fill = not fill
+
+        pdf.set_font("Helvetica", "I", 7)
+        pdf.set_text_color(*GRIS_PDF)
+        pdf.ln(1)
+        pdf.cell(0, 4, f"Fuente: dataset de 80.528 anuncios del mercado espanol de segunda mano.", ln=True)
+        pdf.set_text_color(*NEGRO)
+
+    pie()
+
+    # ── PAGINA 2 — Graficos ────────────────────────────────────────────────────
+    pdf.add_page()
+    cabecera()
+
+    pdf.set_xy(10, 18)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(*AZUL_PDF)
+    pdf.cell(0, 8, "Analisis grafico", ln=True)
+    pdf.set_text_color(*NEGRO)
+
+    pdf.set_xy(10, 28)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(*GRIS_PDF)
+    pdf.cell(0, 5, "DEPRECIACION SEGUN LA ANTIGUEDAD", ln=True)
+    pdf.set_text_color(*NEGRO)
+    pdf.image(buf1, x=10, y=34, w=190)
+
+    pdf.set_xy(10, 120)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(*GRIS_PDF)
+    pdf.cell(0, 5, "IMPACTO DEL KILOMETRAJE EN EL PRECIO", ln=True)
+    pdf.set_text_color(*NEGRO)
+    pdf.image(buf2, x=10, y=126, w=190)
+
+    pdf.set_xy(10, 212)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(*GRIS_PDF)
+    pdf.multi_cell(190, 4.5,
+        "La linea verde discontinua indica el vehiculo introducido. "
+        "La banda azul representa el intervalo de confianza del modelo (+/-" + str(pct_intervalo) + "%). "
+        "Las estimaciones son medias estadisticas; dos vehiculos identicos en papel pueden diferir "
+        "en precio segun su estado real, historial y condiciones de venta.")
+    pdf.set_text_color(*NEGRO)
+
+    pie()
+    return bytes(pdf.output())
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SECCIÓN 0 — PORTADA
 # ══════════════════════════════════════════════════════════════════════════════
@@ -724,6 +957,32 @@ elif seccion == SECCIONES[1]:
                 tabla_sim.columns = ["Año", "Km", "CV", "Combustible", "Transmisión", "Tipo venta", "Precio real", "vs. estimado"]
                 st.dataframe(tabla_sim.reset_index(drop=True), use_container_width=True, hide_index=True)
                 st.caption(f"{len(mask_sim[mask_sim])} anuncios de {marca_sel} con ±2 años y ±50.000 km encontrados{aviso_tipo}.")
+
+            # ── Exportar PDF ───────────────────────────────────────────────────
+            st.markdown("<br>", unsafe_allow_html=True)
+            try:
+                pdf_bytes = _generar_pdf_tasacion(
+                    marca=marca_sel, modelo=modelo_sel, año=año_sel,
+                    km=km_sel, cv=cv_sel, combustible=combustible_sel,
+                    transmision=transmision_sel, etiqueta=etiqueta_sel,
+                    tipo_venta=tipo_venta_sel,
+                    precio=precio, p_min=p_min, p_max=p_max,
+                    pct_intervalo=pct_intervalo,
+                    diff=diff, signo=signo, mae=MAE_MODELO,
+                    edades_rng=edades_rng, precios_edad=precios_edad, ant=ant,
+                    km_rng=km_rng, precios_km_suave=precios_km_suave, km_sel=km_sel,
+                    tabla_sim=tabla_sim if not similares.empty else None,
+                )
+                nombre_pdf = f"tasacion_{marca_sel}_{modelo_sel[:15].replace(' ','_')}_{año_sel}.pdf"
+                st.download_button(
+                    label="Descargar tasacion en PDF",
+                    data=pdf_bytes,
+                    file_name=nombre_pdf,
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.caption(f"No se pudo generar el PDF: {e}")
 
         else:
             st.markdown("""
