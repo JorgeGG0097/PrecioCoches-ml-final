@@ -339,6 +339,7 @@ SECCIONES = [
     "💰  Presupuesto",
     "📉  Depreciación",
     "📊  Explorador",
+    "🎯  Chollos",
 ]
 
 if "seccion_idx" not in st.session_state:
@@ -441,9 +442,9 @@ if seccion == SECCIONES[0]:
              "Error medio (MAE)",
              "En promedio, la estimación se desvía ±1.732 € del precio real del anuncio.",
              "#ff9500"),
-        (s4, "4",
+        (s4, "5",
              "Herramientas de análisis",
-             "Tasador de precio, buscador por presupuesto, comparativa de depreciación y explorador de variables.",
+             "Tasador, buscador por presupuesto, depreciación, explorador de variables y detector de chollos.",
              "#7928ca"),
     ]:
         col.markdown(f"""
@@ -516,6 +517,20 @@ if seccion == SECCIONES[0]:
             st.session_state["seccion_idx"] = 4
             st.session_state["_nav_radio"] = SECCIONES[4]
             st.rerun()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("""
+    <div class="home-card" style="border-left:4px solid #f59e0b;">
+        <span class="card-icon">🎯</span>
+        <h3>Detector de Chollos</h3>
+        <p>El modelo analiza los anuncios reales scrapeados de Coches.net y detecta aquellos cuyo precio
+           está significativamente por debajo del valor estimado — chollos reales con enlace directo al anuncio.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("Ver detector de chollos", key="btn_sec5", use_container_width=True, type="primary"):
+        st.session_state["seccion_idx"] = 5
+        st.session_state["_nav_radio"] = SECCIONES[5]
+        st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(f"""
@@ -1186,3 +1201,119 @@ elif seccion == SECCIONES[4]:
                 c1.metric("Correlación (r)", f"{corr:.3f}")
                 c2.metric(f"Media {ETIQUETAS[var_x]}", f"{df_viz[var_x].mean():,.1f}")
                 c3.metric(f"Media {ETIQUETAS[var_y]}", f"{df_viz[var_y].mean():,.1f}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECCIÓN 5 — DETECTOR DE CHOLLOS
+# ══════════════════════════════════════════════════════════════════════════════
+elif seccion == SECCIONES[5]:
+    st.markdown("""
+    <h2 style="margin-bottom:4px;">🎯 Detector de Chollos</h2>
+    <p style="color:#6B7280;margin-bottom:20px;">
+        Anuncios reales de Coches.net donde el precio pedido está por debajo del valor estimado
+        por el modelo. Cuanto mayor el descuento, mayor la oportunidad.
+    </p>
+    """, unsafe_allow_html=True)
+
+    RUTA_SCRAPEADOS = os.path.join(RUTA_BASE, "coches_scrapeados.csv")
+
+    if not os.path.exists(RUTA_SCRAPEADOS):
+        st.info(
+            "No se encontró **coches_scrapeados.csv**. "
+            "Ejecuta `python scraper_coches.py` para generar los datos."
+        )
+        st.stop()
+
+    @st.cache_data
+    def cargar_scrapeados():
+        d = pd.read_csv(RUTA_SCRAPEADOS, encoding="utf-8-sig")
+        return d
+
+    @st.cache_data
+    def predecir_chollos(hash_key):
+        d = cargar_scrapeados()
+        FEATURES_M = ["año", "potencia_cv", "kilometraje_km", "antiguedad", "km_por_año",
+                      "marca", "modelo", "combustible", "transmision",
+                      "etiqueta_ambiental", "tipo_venta"]
+        X = d[FEATURES_M].copy()
+        preds = modelo_ml.predict(X)
+        d = d.copy()
+        d["precio_modelo"] = preds.round(0)
+        d["ahorro_eur"]    = (d["precio_modelo"] - d["precio_eur"]).round(0)
+        d["descuento_pct"] = (d["ahorro_eur"] / d["precio_modelo"].replace(0, 1) * 100).round(1)
+        return d
+
+    import hashlib
+    mtime = str(os.path.getmtime(RUTA_SCRAPEADOS))
+    df_pred = predecir_chollos(mtime)
+
+    col_filt, col_main = st.columns([1, 3], gap="large")
+
+    with col_filt:
+        st.markdown("**Filtros**")
+        umbral    = st.slider("Descuento mínimo (%)", 5, 50, 15, 5)
+        precio_max_c = st.number_input("Precio máximo (€)", value=50000, step=1000, min_value=1000)
+        marcas_c  = st.multiselect("Marca", sorted(df_pred["marca"].dropna().unique()), default=[])
+        comb_c    = st.multiselect("Combustible", sorted(df_pred["combustible"].dropna().unique()), default=[])
+        fecha_scr = df_pred["fecha_scraping"].iloc[0] if "fecha_scraping" in df_pred.columns else "—"
+        st.caption(f"Datos scrapeados: {fecha_scr} · {len(df_pred):,} anuncios")
+
+    with col_main:
+        mask = (
+            (df_pred["descuento_pct"] >= umbral) &
+            (df_pred["precio_eur"]    <= precio_max_c) &
+            (df_pred["precio_eur"]    > 500)
+        )
+        if marcas_c:
+            mask &= df_pred["marca"].isin(marcas_c)
+        if comb_c:
+            mask &= df_pred["combustible"].isin(comb_c)
+
+        df_c = df_pred[mask].sort_values("descuento_pct", ascending=False).reset_index(drop=True)
+
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Chollos encontrados", f"{len(df_c):,}")
+        k2.metric("Descuento medio",
+                  f"{df_c['descuento_pct'].mean():.1f} %" if len(df_c) else "—")
+        k3.metric("Ahorro medio",
+                  f"{df_c['ahorro_eur'].mean():,.0f} €" if len(df_c) else "—")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        if len(df_c) == 0:
+            st.info("No se encontraron chollos con estos filtros. Reduce el descuento mínimo o amplía los criterios.")
+        else:
+            st.caption(
+                "ℹ️ Descuentos superiores al 40 % pueden reflejar marcas poco representadas en el dataset de entrenamiento "
+                "(p. ej. MG, Lynk & Co). Verifica siempre el anuncio antes de sacar conclusiones."
+            )
+            df_show = df_c[[
+                "marca", "modelo", "año", "kilometraje_km", "combustible",
+                "precio_eur", "precio_modelo", "descuento_pct", "ahorro_eur",
+                "provincia", "url",
+            ]].rename(columns={
+                "año":            "Año",
+                "kilometraje_km": "Km",
+                "combustible":    "Combustible",
+                "precio_eur":     "Precio (€)",
+                "precio_modelo":  "Modelo estima (€)",
+                "descuento_pct":  "Descuento %",
+                "ahorro_eur":     "Ahorro (€)",
+                "provincia":      "Provincia",
+                "url":            "Anuncio",
+                "marca":          "Marca",
+                "modelo":         "Modelo",
+            })
+            st.dataframe(
+                df_show,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Anuncio": st.column_config.LinkColumn("Anuncio", display_text="Ver"),
+                    "Descuento %": st.column_config.NumberColumn(format="%.1f %%"),
+                    "Precio (€)":     st.column_config.NumberColumn(format="%,.0f €"),
+                    "Modelo estima (€)": st.column_config.NumberColumn(format="%,.0f €"),
+                    "Ahorro (€)":     st.column_config.NumberColumn(format="%,.0f €"),
+                    "Km":             st.column_config.NumberColumn(format="%,.0f"),
+                },
+            )
