@@ -1275,26 +1275,27 @@ elif seccion == SECCIONES[5]:
         matches = get_close_matches(modelo_l, nombres_cortos, n=1, cutoff=0.45)
         if matches:
             return pares[nombres_cortos.index(matches[0])][0]
-        return modelo_scr  # sin coincidencia: el encoder usa categoría desconocida
+        return None  # sin coincidencia: descartar este anuncio
 
     @st.cache_data
     def predecir_chollos(hash_key):
-        d = cargar_scrapeados()
+        d = cargar_scrapeados().copy()
         conocidos = _modelos_por_marca()
         FEATURES_M = ["año", "potencia_cv", "kilometraje_km", "antiguedad", "km_por_año",
                       "marca", "modelo", "combustible", "transmision",
                       "etiqueta_ambiental", "tipo_venta"]
-        X = d[FEATURES_M].copy()
-        # Normalizar modelo al más cercano del training antes de predecir
-        X["modelo"] = X.apply(
+        # Mapear cada modelo al más cercano conocido; None = sin coincidencia → descartar
+        d["modelo_pred"] = d.apply(
             lambda r: _modelo_mas_cercano(r["marca"], r["modelo"], conocidos), axis=1
         )
+        d = d[d["modelo_pred"].notna()].copy()
+        X = d[FEATURES_M].copy()
+        X["modelo"] = d["modelo_pred"]
         preds = modelo_ml.predict(X)
-        d = d.copy()
         d["precio_modelo"] = preds.round(0)
         d["ahorro_eur"]    = (d["precio_modelo"] - d["precio_eur"]).round(0)
         d["descuento_pct"] = (d["ahorro_eur"] / d["precio_modelo"].replace(0, 1) * 100).round(1)
-        return d
+        return d.drop(columns=["modelo_pred"])
 
     import hashlib
     mtime = str(os.path.getmtime(RUTA_SCRAPEADOS))
