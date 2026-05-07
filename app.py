@@ -1230,12 +1230,65 @@ elif seccion == SECCIONES[5]:
         return d
 
     @st.cache_data
+    def _modelos_por_marca():
+        """Devuelve dict marca -> lista de modelos conocidos en el training."""
+        return (
+            df.groupby("marca")["modelo"]
+            .apply(lambda s: s.dropna().unique().tolist())
+            .to_dict()
+        )
+
+    def _modelo_mas_cercano(marca, modelo_scr, conocidos_por_marca):
+        from difflib import get_close_matches
+        candidatos = conocidos_por_marca.get(marca, [])
+        if not candidatos:
+            return modelo_scr
+        modelo_l  = str(modelo_scr).lower().strip()
+        marca_l   = marca.lower()
+
+        # Quitar prefijo de marca de los modelos conocidos ("BMW X1" -> "x1")
+        def _quitar_prefijo(s):
+            s2 = s.lower().strip()
+            return s2[len(marca_l):].strip() if s2.startswith(marca_l) else s2
+
+        pares = [(c, _quitar_prefijo(c)) for c in candidatos]  # (original, sin_prefijo)
+
+        # 1. Exacto
+        for c, cn in pares:
+            if cn == modelo_l or c.lower() == modelo_l:
+                return c
+        # 2. Nombre corto conocido contenido en el modelo scrapeado ("x1" en "ix1 xdrive30")
+        for c, cn in sorted(pares, key=lambda x: len(x[1]), reverse=True):
+            if cn and cn in modelo_l:
+                return c
+        # 3. Primer token del scrapeado contiene o está contenido en el nombre corto
+        primer_token = modelo_l.split()[0] if modelo_l.split() else modelo_l
+        for c, cn in sorted(pares, key=lambda x: len(x[1]), reverse=True):
+            if cn and (cn in primer_token or primer_token in cn):
+                return c
+        # 4. Fuzzy del primer token contra nombres cortos
+        nombres_cortos = [cn for _, cn in pares if cn]
+        matches = get_close_matches(primer_token, nombres_cortos, n=1, cutoff=0.6)
+        if matches:
+            return pares[nombres_cortos.index(matches[0])][0]
+        # 5. Fuzzy del modelo completo contra nombres cortos
+        matches = get_close_matches(modelo_l, nombres_cortos, n=1, cutoff=0.45)
+        if matches:
+            return pares[nombres_cortos.index(matches[0])][0]
+        return modelo_scr  # sin coincidencia: el encoder usa categoría desconocida
+
+    @st.cache_data
     def predecir_chollos(hash_key):
         d = cargar_scrapeados()
+        conocidos = _modelos_por_marca()
         FEATURES_M = ["año", "potencia_cv", "kilometraje_km", "antiguedad", "km_por_año",
                       "marca", "modelo", "combustible", "transmision",
                       "etiqueta_ambiental", "tipo_venta"]
         X = d[FEATURES_M].copy()
+        # Normalizar modelo al más cercano del training antes de predecir
+        X["modelo"] = X.apply(
+            lambda r: _modelo_mas_cercano(r["marca"], r["modelo"], conocidos), axis=1
+        )
         preds = modelo_ml.predict(X)
         d = d.copy()
         d["precio_modelo"] = preds.round(0)
