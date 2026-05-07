@@ -99,16 +99,16 @@ def parsear_tarjeta(card) -> dict | None:
         cv_m  = re.search(r'(\d+)\s*[Cc][Vv]', texto)
         cv    = int(cv_m.group(1)) if cv_m else 0
 
-        # Combustible (busca variantes con y sin tilde)
+        # Combustible — nombres exactos del dataset de entrenamiento
         comb = ""
         COMBUST = [
             ("Eléctrico",          ["electrico", "eléctrico", "electric"]),
-            ("Híbrido enchufable", ["enchufable", "plug-in", "plug in", "phev"]),
+            ("Híbrido Enchufable", ["enchufable", "plug-in", "plug in", "phev"]),
             ("Híbrido",            ["híbrido", "hibrido", "hybrid", "mhev", "hev"]),
             ("Gasolina",           ["gasolina", "tfsi", "tsi", "gdi", "benzin"]),
             ("Diésel",             ["diésel", "diesel", "tdi", "hdi", "cdi", "dci", "bluehdi"]),
-            ("GLP",                ["glp"]),
-            ("GNC",                ["gnc"]),
+            ("Glp",                ["glp"]),
+            ("Gnc",                ["gnc"]),
         ]
         texto_l = texto.lower()
         for nombre, variantes in COMBUST:
@@ -116,8 +116,17 @@ def parsear_tarjeta(card) -> dict | None:
                 comb = nombre
                 break
 
-        # Transmisión
-        trans = "Automático" if "automático" in texto.lower() or "automática" in texto.lower() else "Manual"
+        # Transmisión — "Automática" exacto como en el dataset de entrenamiento
+        PATRON_AUTO = [
+            "automático", "automática", "automat",
+            "s tronic", "dsg", "dct", "tiptronic", "steptronic",
+            "cvt", "xtronic", "powershift", "e-drive", "edrive",
+            " at ", "6at", "7at", "8at", "9at",
+        ]
+        trans = "Automática" if any(p in texto_l for p in PATRON_AUTO) else "Manual"
+        # Eléctricos puros: siempre automáticos
+        if comb == "Eléctrico":
+            trans = "Automática"
 
         # Tipo venta
         tipo_venta = "Usado"
