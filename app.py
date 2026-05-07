@@ -1261,7 +1261,6 @@ elif seccion == SECCIONES[5]:
     with col_main:
         mask = (
             (df_pred["descuento_pct"] >= umbral) &
-            (df_pred["descuento_pct"] <= 45) &   # elimina predicciones aberrantes por modelo desconocido
             (df_pred["precio_eur"]    <= precio_max_c) &
             (df_pred["precio_eur"]    > 500)
         )
@@ -1289,12 +1288,13 @@ elif seccion == SECCIONES[5]:
                 "(p. ej. MG, Lynk & Co). Verifica siempre el anuncio antes de sacar conclusiones."
             )
             df_show = df_c[[
-                "marca", "modelo", "año", "kilometraje_km", "combustible",
+                "marca", "modelo", "año", "kilometraje_km", "potencia_cv", "combustible",
                 "precio_eur", "precio_modelo", "descuento_pct", "ahorro_eur",
                 "provincia", "url",
             ]].rename(columns={
                 "año":            "Año",
                 "kilometraje_km": "Km",
+                "potencia_cv":    "CV",
                 "combustible":    "Combustible",
                 "precio_eur":     "Precio (€)",
                 "precio_modelo":  "Modelo estima (€)",
@@ -1316,5 +1316,6 @@ elif seccion == SECCIONES[5]:
                     "Modelo estima (€)": st.column_config.NumberColumn(format="%,.0f €"),
                     "Ahorro (€)":     st.column_config.NumberColumn(format="%,.0f €"),
                     "Km":             st.column_config.NumberColumn(format="%,.0f"),
+                    "CV":             st.column_config.NumberColumn(format="%d"),
                 },
             )
