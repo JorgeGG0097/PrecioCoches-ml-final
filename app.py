@@ -426,16 +426,29 @@ if seccion == SECCIONES[0]:
     """, unsafe_allow_html=True)
 
     s1, s2, s3, s4 = st.columns(4, gap="small")
-    for col, val, lbl, color in [
-        (s1, "80.528",            "Vehículos en dataset",    "#0070f3"),
-        (s2, "0.941",             "R² del modelo GBM",       "#00d084"),
-        (s3, f"±{MAE_MODELO:,} €","Error medio (MAE)",       "#ff9500"),
-        (s4, "4",                 "Herramientas de análisis", "#7928ca"),
+    for col, val, lbl, desc, color in [
+        (s1, "80.528",
+             "Vehículos en dataset",
+             "Anuncios reales del mercado español usados para entrenar el modelo.",
+             "#0070f3"),
+        (s2, "0.941",
+             "R² del modelo GBM",
+             "Precisión global: 1.0 sería perfección absoluta. 0.941 indica que el modelo explica el 94% de la variación de precios.",
+             "#00d084"),
+        (s3, f"±{MAE_MODELO:,} €",
+             "Error medio (MAE)",
+             "En promedio, la estimación se desvía ±1.732 € del precio real del anuncio.",
+             "#ff9500"),
+        (s4, "4",
+             "Herramientas de análisis",
+             "Tasador de precio, buscador por presupuesto, comparativa de depreciación y explorador de variables.",
+             "#7928ca"),
     ]:
         col.markdown(f"""
         <div class="stat-card" style="border-top: 3px solid {color};">
             <div class="stat-val" style="color:{color};">{val}</div>
             <div class="stat-lbl">{lbl}</div>
+            <div style="font-size:0.75rem;color:#6B7280;margin-top:6px;line-height:1.4;">{desc}</div>
         </div>
         """, unsafe_allow_html=True)
 
