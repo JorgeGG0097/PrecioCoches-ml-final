@@ -328,7 +328,8 @@ if modelo_ml is None or df is None or categorias is None or rangos is None:
     st.error("Archivos del modelo no encontrados. Ejecuta primero **entrenar_modelo.py**.")
     st.stop()
 
-MAE_MODELO = info_model["mae_test"] if info_model else 1772
+MAE_MODELO   = info_model["mae_test"] if info_model else 1772
+MAPE_FACTOR  = MAE_MODELO / df["precio_eur"].median()   # ≈ 0.108 → intervalo escala con el precio
 
 
 # ── Secciones ──────────────────────────────────────────────────────────────────
@@ -561,8 +562,9 @@ elif seccion == SECCIONES[1]:
             }])
 
             precio = modelo_ml.predict(entrada)[0]
-            p_min  = max(0, precio - MAE_MODELO)
-            p_max  = precio + MAE_MODELO
+            p_min  = max(500, precio * (1 - MAPE_FACTOR))
+            p_max  = precio * (1 + MAPE_FACTOR)
+            pct_intervalo = round(MAPE_FACTOR * 100)
 
             media_marca = df[df["marca"] == marca_sel]["precio_eur"].median()
             diff = precio - media_marca
@@ -577,8 +579,8 @@ elif seccion == SECCIONES[1]:
                     Precio estimado de mercado
                 </p>
                 <div class="precio-principal">{precio:,.0f} €</div>
-                <div class="precio-rango">Rango: {p_min:,.0f} € — {p_max:,.0f} €</div>
-                <div class="confidence-badge"><span class="dot"></span> GBM · R² 0.941 · precisión ±{MAE_MODELO:,} €</div>
+                <div class="precio-rango">Intervalo de mercado: {p_min:,.0f} € — {p_max:,.0f} € &nbsp;<span style="font-size:0.8rem;color:#9CA3AF;">(±{pct_intervalo}%)</span></div>
+                <div class="confidence-badge"><span class="dot"></span> GBM · R² 0.941 · MAE del modelo ±{MAE_MODELO:,} €</div>
                 <br><span class="{clase_diff}">{icono_diff} {abs(diff):,.0f} € {signo} de la mediana de {marca_sel}</span>
                 <br><span style="display:inline-block;margin-top:10px;background:{etq_bg};color:{etq_fg};
                     border-radius:6px;padding:4px 10px;font-size:0.82rem;font-weight:600;">
@@ -601,9 +603,9 @@ elif seccion == SECCIONES[1]:
             fig1 = go.Figure()
             fig1.add_trace(go.Scatter(
                 x=edades_rng + edades_rng[::-1],
-                y=[p + MAE_MODELO for p in precios_edad] + [p - MAE_MODELO for p in precios_edad][::-1],
+                y=[p * (1 + MAPE_FACTOR) for p in precios_edad] + [p * (1 - MAPE_FACTOR) for p in precios_edad][::-1],
                 fill="toself", fillcolor="rgba(0,112,243,0.1)",
-                line=dict(color="rgba(0,0,0,0)"), name="Rango estimado",
+                line=dict(color="rgba(0,0,0,0)"), name="Intervalo estimado",
             ))
             fig1.add_trace(go.Scatter(
                 x=edades_rng, y=precios_edad,
@@ -807,18 +809,37 @@ elif seccion == SECCIONES[2]:
                 fig.update_layout(title=f"Oferta entre {p_min_u:,} € y {p_max_u:,} €")
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Mejor relación CV/precio
-                st.markdown("#### Mejor relación potencia / precio")
+                # Mejor relación variable/precio
+                st.markdown("#### Mejor relación con el precio")
+                opcion_rel = st.radio(
+                    "Variable a comparar:",
+                    ["CV por 1.000 €", "Km medios", "Año medio"],
+                    horizontal=True,
+                    key="radio_relacion_precio"
+                )
                 filtrado2 = filtrado.copy()
-                filtrado2["cv_por_1000eur"] = (
-                    filtrado2["potencia_cv"] / filtrado2["precio_eur"] * 1000
-                ).round(1)
-                mejores = (filtrado2.groupby("marca")["cv_por_1000eur"]
-                           .mean().sort_values(ascending=False).head(8).reset_index())
-                mejores.columns = ["Marca", "CV por 1.000 €"]
-                fig2 = px.bar(mejores.sort_values("CV por 1.000 €"), x="CV por 1.000 €", y="Marca",
+                if opcion_rel == "CV por 1.000 €":
+                    filtrado2["_metrica"] = (filtrado2["potencia_cv"] / filtrado2["precio_eur"] * 1000).round(1)
+                    col_label = "CV por 1.000 €"
+                    hover_fmt = "%{x:.1f} CV/1.000 €"
+                    ascending = False
+                elif opcion_rel == "Km medios":
+                    filtrado2["_metrica"] = filtrado2["kilometraje_km"]
+                    col_label = "Km medios"
+                    hover_fmt = "%{x:,.0f} km"
+                    ascending = True
+                else:
+                    filtrado2["_metrica"] = filtrado2["año"]
+                    col_label = "Año medio"
+                    hover_fmt = "%{x:.0f}"
+                    ascending = False
+                mejores = (filtrado2.groupby("marca")["_metrica"]
+                           .mean().sort_values(ascending=ascending).head(8).reset_index())
+                mejores.columns = ["Marca", col_label]
+                fig2 = px.bar(mejores.sort_values(col_label, ascending=not ascending),
+                              x=col_label, y="Marca",
                               orientation="h", color_discrete_sequence=[VERDE])
-                fig2.update_traces(hovertemplate="<b>%{y}</b><br>%{x:.1f} CV/1.000 €<extra></extra>")
+                fig2.update_traces(hovertemplate=f"<b>%{{y}}</b><br>{hover_fmt}<extra></extra>")
                 estilo_fig(fig2, height=320)
                 st.plotly_chart(fig2, use_container_width=True)
 
