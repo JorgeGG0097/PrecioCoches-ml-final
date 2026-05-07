@@ -1261,6 +1261,7 @@ elif seccion == SECCIONES[5]:
     with col_main:
         mask = (
             (df_pred["descuento_pct"] >= umbral) &
+            (df_pred["descuento_pct"] <= 45) &   # elimina predicciones aberrantes por modelo desconocido
             (df_pred["precio_eur"]    <= precio_max_c) &
             (df_pred["precio_eur"]    > 500)
         )
