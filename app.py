@@ -1344,7 +1344,24 @@ elif seccion == SECCIONES[5]:
         if len(df_c) == 0:
             st.info("No se encontraron chollos con estos filtros. Reduce el descuento mínimo o amplía los criterios.")
         else:
-            st.caption("Verifica siempre el anuncio antes de contactar al vendedor.")
+            st.markdown("""
+            <div style="background:#FEF2F2;border-left:3px solid #DC2626;padding:10px 14px;
+                        border-radius:4px;margin-bottom:14px;font-size:0.82rem;color:#7F1D1D;line-height:1.7;">
+            <b>⚠️ Antes de tomar cualquier decisión, ten en cuenta:</b><br>
+            &bull; El modelo predice el precio a partir de marca, modelo, año, km, potencia y combustible.
+            <b>No tiene en cuenta</b> el estado real del vehículo, el historial de accidentes, las reparaciones previas,
+            el número de propietarios ni si tiene la ITV en vigor.<br>
+            &bull; Un precio bajo puede deberse a <b>daños estéticos o mecánicos no declarados</b>,
+            a una situación urgente de venta o a diferencias fiscales regionales
+            (p. ej. IGIC en Canarias frente al IVA peninsular).<br>
+            &bull; La estimación es una <b>media estadística</b>: dos coches idénticos en papel
+            pueden diferir miles de euros según su mantenimiento real.<br>
+            &bull; <b>Solicita siempre el informe de historial del vehículo</b> (DGT, Carfax o similar)
+            y realiza una inspección presencial o con un mecánico de confianza antes de comprar.<br>
+            &bull; Esta herramienta es un <b>punto de partida para detectar oportunidades</b>,
+            no un sustituto de la debida diligencia antes de una compra.
+            </div>
+            """, unsafe_allow_html=True)
             df_show = df_c[[
                 "marca", "modelo", "año", "kilometraje_km", "potencia_cv", "combustible",
                 "precio_eur", "precio_modelo", "descuento_pct", "ahorro_eur",
