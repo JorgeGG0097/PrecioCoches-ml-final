@@ -469,7 +469,8 @@ def _generar_pdf_tasacion(
         pdf.set_text_color(*NEGRO)
 
     def pie():
-        pdf.set_y(-12)
+        pdf.set_auto_page_break(auto=False)   # evitar que el pie salte a página nueva
+        pdf.set_y(-10)
         pdf.set_font("Helvetica", "I", 7.5)
         pdf.set_text_color(*GRIS_PDF)
         pdf.cell(0, 5,
@@ -477,6 +478,7 @@ def _generar_pdf_tasacion(
             "Verificar siempre el estado real del vehiculo antes de cualquier decision de compra.",
             align="C")
         pdf.set_text_color(*NEGRO)
+        pdf.set_auto_page_break(auto=True, margin=14)
 
     # ── PAGINA 1 — Resumen ─────────────────────────────────────────────────────
     pdf.add_page()
