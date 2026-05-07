@@ -1209,10 +1209,16 @@ elif seccion == SECCIONES[4]:
 elif seccion == SECCIONES[5]:
     st.markdown("""
     <h2 style="margin-bottom:4px;">🎯 Detector de Chollos</h2>
-    <p style="color:#6B7280;margin-bottom:20px;">
-        Anuncios reales de Coches.net donde el precio pedido está por debajo del valor estimado
-        por el modelo. Cuanto mayor el descuento, mayor la oportunidad.
+    <p style="color:#6B7280;margin-bottom:12px;">
+        Anuncios reales de Coches.net donde el precio pedido está por debajo del valor estimado por el modelo.
     </p>
+    <div style="background:#FFF7ED;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:4px;margin-bottom:20px;font-size:0.85rem;color:#78350F;line-height:1.6;">
+        <b>¿Qué descuento es realista?</b> El modelo tiene un error medio de ±11 %, por lo que descuentos
+        inferiores al 15 % pueden ser simplemente ruido estadístico. Un descuento del <b>15-25 %</b> empieza
+        a ser significativo (2.500-5.000 € en un coche de 20.000 €) y difícil de justificar por desgaste normal.
+        Por eso solo se muestran anuncios con <b>descuento entre el 15 % y el 25 %</b>: por debajo es ruido,
+        por encima suele indicar que el modelo no conoce bien ese vehículo concreto.
+    </div>
     """, unsafe_allow_html=True)
 
     RUTA_SCRAPEADOS = os.path.join(RUTA_BASE, "coches_scrapeados.csv")
@@ -1305,7 +1311,7 @@ elif seccion == SECCIONES[5]:
 
     with col_filt:
         st.markdown("**Filtros**")
-        umbral    = st.slider("Descuento mínimo (%)", 5, 50, 15, 5)
+        umbral    = st.slider("Descuento mínimo (%)", 15, 25, 20, 1)
         precio_max_c = st.number_input("Precio máximo (€)", value=50000, step=1000, min_value=1000)
         marcas_c  = st.multiselect("Marca", sorted(df_pred["marca"].dropna().unique()), default=[])
         comb_c    = st.multiselect("Combustible", sorted(df_pred["combustible"].dropna().unique()), default=[])
@@ -1315,6 +1321,7 @@ elif seccion == SECCIONES[5]:
     with col_main:
         mask = (
             (df_pred["descuento_pct"] >= umbral) &
+            (df_pred["descuento_pct"] <= 25) &
             (df_pred["precio_eur"]    <= precio_max_c) &
             (df_pred["precio_eur"]    > 500)
         )
@@ -1337,10 +1344,7 @@ elif seccion == SECCIONES[5]:
         if len(df_c) == 0:
             st.info("No se encontraron chollos con estos filtros. Reduce el descuento mínimo o amplía los criterios.")
         else:
-            st.caption(
-                "ℹ️ Descuentos superiores al 40 % pueden reflejar marcas poco representadas en el dataset de entrenamiento "
-                "(p. ej. MG, Lynk & Co). Verifica siempre el anuncio antes de sacar conclusiones."
-            )
+            st.caption("Verifica siempre el anuncio antes de contactar al vendedor.")
             df_show = df_c[[
                 "marca", "modelo", "año", "kilometraje_km", "potencia_cv", "combustible",
                 "precio_eur", "precio_modelo", "descuento_pct", "ahorro_eur",
