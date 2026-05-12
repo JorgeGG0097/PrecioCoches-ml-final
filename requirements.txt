@@ -6,3 +6,4 @@ scikit-learn>=1.2.0
 joblib>=1.2.0
 fpdf2>=2.7.0
 matplotlib>=3.5.0
+groq>=0.11.0  # cliente API vision por computador

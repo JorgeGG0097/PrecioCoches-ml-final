@@ -813,6 +813,19 @@ elif seccion == SECCIONES[1]:
 
         transmision_sel = st.selectbox("Transmisión", sorted(df["transmision"].unique()))
         tipo_venta_sel  = st.selectbox("Tipo de venta", ["Usado", "Km 0", "Casi nuevo", "Demo"])
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("#### Fotos del vehiculo *(opcional)*")
+        st.caption(
+            "Sube una o varias fotos del coche. La IA analizara los desperfectos visibles "
+            "y ajustara el precio estimado segun el estado real del vehiculo."
+        )
+        imagenes_subidas = st.file_uploader(
+            "Selecciona fotos",
+            type=["jpg", "jpeg", "png", "webp"],
+            accept_multiple_files=True,
+            key="imgs_tasador",
+        )
         calcular = st.button("Calcular precio estimado", type="primary", use_container_width=True)
 
     with col_result:
@@ -831,23 +844,110 @@ elif seccion == SECCIONES[1]:
             }])
 
             precio = modelo_ml.predict(entrada)[0]
-            p_min  = max(500, precio * (1 - MAPE_FACTOR))
-            p_max  = precio * (1 + MAPE_FACTOR)
+
+            # ── Analisis visual de desperfectos (opcional) ───────────────────
+            resultado_vision = None
+            desc_danos_pct = 0
+            if imagenes_subidas:
+                with st.spinner("Analizando imagen..."):
+                    try:
+                        from groq import Groq as _Groq
+                        from PIL import Image as _Image
+                        import base64 as _b64, io as _io, re as _re, json as _json
+                        try:
+                            _api_key = st.secrets["GROQ_API_KEY"]
+                        except Exception:
+                            _api_key = ""
+                        if _api_key:
+                            _vc = _Groq(api_key=_api_key)
+                            _instruccion = (
+                                f"Eres un perito de coches experto en el mercado espanol de segunda mano. "
+                                f"Analiza las imagenes de un {marca_sel} {modelo_sel} del anio {año_sel}. "
+                                f"Evalua los desperfectos visibles (golpes, abolladuras, araniazos, oxido, cristales rotos, etc.) "
+                                f"y responde UNICAMENTE con un JSON valido con esta estructura exacta: "
+                                f'{{"tiene_danos": true, "nivel_gravedad": "ninguno", '
+                                f'"zonas_afectadas": [], "descripcion": "", "descuento_pct": 0}} '
+                                f"Para nivel_gravedad usa exactamente: ninguno, leve, moderado o grave. "
+                                f"Para descuento_pct usa: ninguno=0, leve entre 3 y 7, moderado entre 8 y 15, grave entre 20 y 35. "
+                                f"Si la imagen no muestra claramente un coche usa nivel_gravedad ninguno y descuento_pct 0."
+                            )
+                            _payload = []
+                            for _f in imagenes_subidas:
+                                _img = _Image.open(_f).convert("RGB")
+                                _buf = _io.BytesIO()
+                                _img.save(_buf, format="JPEG", quality=85)
+                                _b64str = _b64.b64encode(_buf.getvalue()).decode()
+                                _payload.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:image/jpeg;base64,{_b64str}"},
+                                })
+                            _payload.append({"type": "text", "text": _instruccion})
+                            _vresp = _vc.chat.completions.create(
+                                model="meta-llama/llama-4-scout-17b-16e-instruct",
+                                messages=[{"role": "user", "content": _payload}],
+                            )
+                            _vtext = _vresp.choices[0].message.content
+                            _vm = _re.search(r"\{.*?\}", _vtext, _re.DOTALL)
+                            if _vm:
+                                resultado_vision = _json.loads(_vm.group())
+                                desc_danos_pct = max(0, min(35, int(resultado_vision.get("descuento_pct", 0))))
+                        else:
+                            st.caption("Servicio de analisis visual no configurado — se muestra el precio base.")
+                    except Exception:
+                        resultado_vision = None
+                        st.caption("Analisis de imagen no disponible en este momento. Se muestra el precio base.")
+
+            precio_final = precio * (1 - desc_danos_pct / 100)
+            p_min  = max(500, precio_final * (1 - MAPE_FACTOR))
+            p_max  = precio_final * (1 + MAPE_FACTOR)
             pct_intervalo = round(MAPE_FACTOR * 100)
 
             media_marca = df[df["marca"] == marca_sel]["precio_eur"].median()
-            diff = precio - media_marca
+            diff = precio_final - media_marca
             signo = "por encima" if diff > 0 else "por debajo"
             clase_diff = "precio-diff-pos" if diff > 0 else "precio-diff-neg"
             icono_diff = "▲" if diff > 0 else "▼"
             etq_fg, etq_bg = _COLOR_ETIQUETA.get(etiqueta_sel, ("#475569", "#F1F5F9"))
 
+            # Bloque de desperfectos para incrustar en la tarjeta
+            if resultado_vision and desc_danos_pct > 0:
+                _niv = resultado_vision.get("nivel_gravedad", "")
+                _col_niv = {"leve": "#f59e0b", "moderado": "#f97316", "grave": "#DC2626"}.get(_niv, GRIS)
+                _zonas = ", ".join(resultado_vision.get("zonas_afectadas", [])) or "No especificadas"
+                _desc_txt = resultado_vision.get("descripcion", "")
+                _bloque_danos = f"""
+                <div style="margin-top:14px;padding:10px 14px;background:#FEF2F2;
+                            border-left:3px solid {_col_niv};border-radius:4px;">
+                    <div style="font-size:0.82rem;font-weight:700;color:{_col_niv};margin-bottom:5px;">
+                        Desperfectos detectados &mdash; -{desc_danos_pct}% aplicado al precio base
+                    </div>
+                    <div style="font-size:0.8rem;color:#374151;">
+                        <b>Gravedad:</b> {_niv.capitalize()} &nbsp;|&nbsp; <b>Zonas:</b> {_zonas}
+                    </div>
+                    <div style="font-size:0.78rem;color:#6B7280;margin-top:4px;">{_desc_txt}</div>
+                    <div style="font-size:0.75rem;color:#9CA3AF;margin-top:6px;">
+                        Precio base modelo: {precio:,.0f} &euro; &rarr; Precio ajustado: {precio_final:,.0f} &euro;
+                    </div>
+                </div>"""
+                _label_precio = "Precio estimado ajustado por estado"
+            elif resultado_vision and desc_danos_pct == 0:
+                _bloque_danos = """
+                <div style="margin-top:14px;padding:8px 14px;background:#F0FDF4;
+                            border-left:3px solid #16a34a;border-radius:4px;
+                            font-size:0.8rem;color:#15803d;">
+                    <b>Sin desperfectos visibles detectados</b> &mdash; precio sin ajuste por estado.
+                </div>"""
+                _label_precio = "Precio estimado de mercado"
+            else:
+                _bloque_danos = ""
+                _label_precio = "Precio estimado de mercado"
+
             st.markdown(f"""
             <div class="card">
                 <p style="font-size:0.8rem;text-transform:uppercase;letter-spacing:.05em;color:{GRIS};margin:0 0 8px;">
-                    Precio estimado de mercado
+                    {_label_precio}
                 </p>
-                <div class="precio-principal">{precio:,.0f} €</div>
+                <div class="precio-principal">{precio_final:,.0f} €</div>
                 <div class="precio-rango">Intervalo de mercado: {p_min:,.0f} € — {p_max:,.0f} € &nbsp;<span style="font-size:0.8rem;color:#9CA3AF;">(±{pct_intervalo}%)</span></div>
                 <div class="confidence-badge"><span class="dot"></span> GBM · R² 0.941 · MAE del modelo ±{MAE_MODELO:,} €</div>
                 <br><span class="{clase_diff}">{icono_diff} {abs(diff):,.0f} € {signo} de la mediana de {marca_sel}</span>
@@ -857,6 +957,9 @@ elif seccion == SECCIONES[1]:
                 </span>
             </div>
             """, unsafe_allow_html=True)
+
+            if _bloque_danos:
+                st.markdown(_bloque_danos, unsafe_allow_html=True)
 
             # ── Curva depreciación ─────────────────────────────────────────────
             st.markdown("**Depreciación según la antigüedad**")
@@ -968,7 +1071,7 @@ elif seccion == SECCIONES[1]:
                     km=km_sel, cv=cv_sel, combustible=combustible_sel,
                     transmision=transmision_sel, etiqueta=etiqueta_sel,
                     tipo_venta=tipo_venta_sel,
-                    precio=precio, p_min=p_min, p_max=p_max,
+                    precio=precio_final, p_min=p_min, p_max=p_max,
                     pct_intervalo=pct_intervalo,
                     diff=diff, signo=signo, mae=MAE_MODELO,
                     edades_rng=edades_rng, precios_edad=precios_edad, ant=ant,
