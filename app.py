@@ -347,6 +347,9 @@ if "seccion_idx" not in st.session_state:
 if "_nav_radio" not in st.session_state:
     st.session_state["_nav_radio"] = SECCIONES[0]
 
+def _navegar(idx):
+    st.session_state["_nav_radio"] = SECCIONES[idx]
+
 
 # ── Navegación superior ────────────────────────────────────────────────────────
 seccion = st.radio(
@@ -704,10 +707,7 @@ if seccion == SECCIONES[0]:
                del precio de mercado con el modelo GBM, más coches similares reales.</p>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("Ir al Tasador de precio", key="btn_sec1", use_container_width=True, type="primary"):
-            st.session_state["seccion_idx"] = 1
-            st.session_state["_nav_radio"] = SECCIONES[1]
-            st.rerun()
+        st.button("Ir al Tasador de precio", key="btn_sec1", use_container_width=True, type="primary", on_click=_navegar, args=(1,))
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -719,10 +719,7 @@ if seccion == SECCIONES[0]:
                y analiza cuál conserva mejor su precio con el paso del tiempo.</p>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("Analizar depreciación", key="btn_sec3", use_container_width=True, type="primary"):
-            st.session_state["seccion_idx"] = 3
-            st.session_state["_nav_radio"] = SECCIONES[3]
-            st.rerun()
+        st.button("Analizar depreciación", key="btn_sec3", use_container_width=True, type="primary", on_click=_navegar, args=(3,))
 
     with col_b:
         st.markdown("""
@@ -733,10 +730,7 @@ if seccion == SECCIONES[0]:
                descubrir qué opciones existen en el mercado de segunda mano.</p>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("Explorar por presupuesto", key="btn_sec2", use_container_width=True, type="primary"):
-            st.session_state["seccion_idx"] = 2
-            st.session_state["_nav_radio"] = SECCIONES[2]
-            st.rerun()
+        st.button("Explorar por presupuesto", key="btn_sec2", use_container_width=True, type="primary", on_click=_navegar, args=(2,))
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -748,10 +742,7 @@ if seccion == SECCIONES[0]:
                kilometraje, combustible… — y obtén gráficas e interpretaciones automáticas.</p>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("Ver relación entre características", key="btn_sec4", use_container_width=True, type="primary"):
-            st.session_state["seccion_idx"] = 4
-            st.session_state["_nav_radio"] = SECCIONES[4]
-            st.rerun()
+        st.button("Ver relación entre características", key="btn_sec4", use_container_width=True, type="primary", on_click=_navegar, args=(4,))
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("""
@@ -762,10 +753,7 @@ if seccion == SECCIONES[0]:
            está significativamente por debajo del valor estimado — chollos reales con enlace directo al anuncio.</p>
     </div>
     """, unsafe_allow_html=True)
-    if st.button("Ver detector de chollos", key="btn_sec5", use_container_width=True, type="primary"):
-        st.session_state["seccion_idx"] = 5
-        st.session_state["_nav_radio"] = SECCIONES[5]
-        st.rerun()
+    st.button("Ver detector de chollos", key="btn_sec5", use_container_width=True, type="primary", on_click=_navegar, args=(5,))
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(f"""
