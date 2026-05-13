@@ -3,7 +3,8 @@
 scraper_coches.py  —  Descarga anuncios de Coches.net y genera coches_scrapeados.csv
 Uso:
     python scraper_coches.py            # scraping completo (MAX_PAGINAS)
-    python scraper_coches.py --test     # 1 página, imprime estructura y 3 anuncios
+    python scraper_coches.py --test     # 1 pagina, imprime estructura y 3 anuncios
+    python scraper_coches.py --test-foto  # muestra la URL de foto extraida en 5 anuncios
 """
 
 import sys, time, re
@@ -82,6 +83,22 @@ def parsear_tarjeta(card) -> dict | None:
         url = link_el.get_attribute('href') if link_el else ""
         if url and not url.startswith('http'):
             url = "https://www.coches.net" + url
+
+        # Foto principal — iteramos todos los imgs hasta encontrar la foto del coche
+        url_foto = ""
+        for img_el in card.query_selector_all('img'):
+            for attr in ('src', 'data-src', 'data-original', 'data-lazy', 'data-lazy-src'):
+                val = img_el.get_attribute(attr) or ""
+                if (val and not val.startswith('data:')
+                        and '.svg' not in val
+                        and 'placeholder' not in val.lower()
+                        and 'icon' not in val.lower()):
+                    url_foto = val
+                    break
+            if url_foto:
+                if not url_foto.startswith('http'):
+                    url_foto = "https://www.coches.net" + url_foto
+                break
 
         # Intentar extraer año, km, combustible del texto completo de la tarjeta
         año_m = re.search(r'\b(19[9]\d|20[0-2]\d)\b', texto)
@@ -182,6 +199,7 @@ def parsear_tarjeta(card) -> dict | None:
             "precio_eur":         precio,
             "provincia":          provincia,
             "url":                url,
+            "url_foto":           url_foto,
             "antiguedad":         antiguedad,
             "km_por_año":         km_por_año,
             "fecha_scraping":     datetime.now().strftime("%Y-%m-%d"),
@@ -231,6 +249,20 @@ def scrapear_pagina(page, num_pag: int, modo_test: bool = False) -> list[dict]:
                 print(cards[1].inner_text()[:400])
         return []
 
+    # modo test-foto: parsea y muestra url_foto de los primeros 5 anuncios
+    if getattr(scrapear_pagina, '_modo_test_foto', False):
+        resultados = []
+        for card in cards[:10]:
+            r = parsear_tarjeta(card)
+            if r:
+                resultados.append(r)
+                if len(resultados) >= 5:
+                    break
+        for i, r in enumerate(resultados, 1):
+            print(f"\n[{i}] {r['marca']} {r['modelo']} ({r['año']}) — {r['precio_eur']:,.0f} EUR")
+            print(f"    url_foto: {r['url_foto'] or '(sin foto)'}")
+        return resultados
+
     if not selector:
         return []
 
@@ -243,7 +275,8 @@ def scrapear_pagina(page, num_pag: int, modo_test: bool = False) -> list[dict]:
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 def main():
-    test = "--test" in sys.argv
+    test      = "--test"      in sys.argv
+    test_foto = "--test-foto" in sys.argv
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -256,12 +289,19 @@ def main():
             viewport={"width": 1366, "height": 768},
             extra_http_headers={"Accept-Language": "es-ES,es;q=0.9"},
         )
-        # Ocultar rastros de automatización
+        # Ocultar rastros de automatizacion
         context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = context.new_page()
 
         if test:
             scrapear_pagina(page, 1, modo_test=True)
+            browser.close()
+            return
+
+        if test_foto:
+            scrapear_pagina._modo_test_foto = True
+            print("--- Test extraccion de fotos (pag 1) ---")
+            scrapear_pagina(page, 1)
             browser.close()
             return
 
@@ -292,8 +332,9 @@ def main():
 
     df = pd.DataFrame(registros)
     df.to_csv(SALIDA_CSV, index=False, encoding="utf-8-sig")
-    print(f"\nGuardado: {SALIDA_CSV}  ({len(df)} anuncios)")
-    print(df[["marca", "modelo", "año", "kilometraje_km", "precio_eur"]].head(5).to_string())
+    con_foto = df["url_foto"].notna() & (df["url_foto"] != "")
+    print(f"\nGuardado: {SALIDA_CSV}  ({len(df)} anuncios, {con_foto.sum()} con foto)")
+    print(df[["marca", "modelo", "año", "kilometraje_km", "precio_eur", "url_foto"]].head(5).to_string())
 
 if __name__ == "__main__":
     main()

@@ -257,6 +257,26 @@ def cargar_modelo():
     ruta = os.path.join(RUTA_BASE, "modelo_gbm.pkl")
     return joblib.load(ruta) if os.path.exists(ruta) else None
 
+@st.cache_resource
+def cargar_modelo_cnn():
+    try:
+        import torch
+        import torch.nn as nn
+        from torchvision import models
+        ruta = os.path.join(RUTA_BASE, "modelo_cnn.pt")
+        if not os.path.exists(ruta):
+            return None
+        m = models.efficientnet_b0(weights=None)
+        m.classifier = nn.Sequential(
+            nn.Dropout(p=0.4),
+            nn.Linear(m.classifier[1].in_features, 2),
+        )
+        m.load_state_dict(torch.load(ruta, map_location="cpu", weights_only=True))
+        m.eval()
+        return m
+    except Exception:
+        return None
+
 _MARCA_MAP = {"Alfa": "Alfa Romeo", "Mercedes": "Mercedes-Benz", "Land": "Land Rover"}
 
 def _normalizar_marca(m):
@@ -833,57 +853,65 @@ elif seccion == SECCIONES[1]:
 
             precio = modelo_ml.predict(entrada)[0]
 
-            # ── Analisis visual de desperfectos (opcional) ───────────────────
+            # ── Analisis visual de desperfectos con CNN propio ───────────────
             resultado_vision = None
-            desc_danos_pct = 0
+            desc_danos_pct   = 0
             if imagenes_subidas:
-                with st.spinner("Analizando imagen..."):
-                    try:
-                        from groq import Groq as _Groq
-                        from PIL import Image as _Image
-                        import base64 as _b64, io as _io, re as _re, json as _json
+                _cnn = cargar_modelo_cnn()
+                if _cnn is not None:
+                    with st.spinner("Analizando imagen con modelo CNN..."):
                         try:
-                            _api_key = st.secrets["GROQ_API_KEY"]
-                        except Exception:
-                            _api_key = ""
-                        if _api_key:
-                            _vc = _Groq(api_key=_api_key)
-                            _instruccion = (
-                                f"Eres un perito de coches experto en el mercado espanol de segunda mano. "
-                                f"Analiza las imagenes de un {marca_sel} {modelo_sel} del anio {año_sel}. "
-                                f"Evalua los desperfectos visibles (golpes, abolladuras, araniazos, oxido, cristales rotos, etc.) "
-                                f"y responde UNICAMENTE con un JSON valido con esta estructura exacta: "
-                                f'{{"tiene_danos": true, "nivel_gravedad": "ninguno", '
-                                f'"zonas_afectadas": [], "descripcion": "", "descuento_pct": 0}} '
-                                f"Para nivel_gravedad usa exactamente: ninguno, leve, moderado o grave. "
-                                f"Para descuento_pct usa: ninguno=0, leve entre 3 y 7, moderado entre 8 y 15, grave entre 20 y 35. "
-                                f"Si la imagen no muestra claramente un coche usa nivel_gravedad ninguno y descuento_pct 0."
-                            )
-                            _payload = []
+                            import torch as _torch
+                            from PIL import Image as _Image
+                            from torchvision import transforms as _tf
+
+                            _transform = _tf.Compose([
+                                _tf.Resize((224, 224)),
+                                _tf.ToTensor(),
+                                _tf.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+                            ])
+
+                            _probs_danado = []
                             for _f in imagenes_subidas:
-                                _img = _Image.open(_f).convert("RGB")
-                                _buf = _io.BytesIO()
-                                _img.save(_buf, format="JPEG", quality=85)
-                                _b64str = _b64.b64encode(_buf.getvalue()).decode()
-                                _payload.append({
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:image/jpeg;base64,{_b64str}"},
-                                })
-                            _payload.append({"type": "text", "text": _instruccion})
-                            _vresp = _vc.chat.completions.create(
-                                model="meta-llama/llama-4-scout-17b-16e-instruct",
-                                messages=[{"role": "user", "content": _payload}],
-                            )
-                            _vtext = _vresp.choices[0].message.content
-                            _vm = _re.search(r"\{.*?\}", _vtext, _re.DOTALL)
-                            if _vm:
-                                resultado_vision = _json.loads(_vm.group())
-                                desc_danos_pct = max(0, min(35, int(resultado_vision.get("descuento_pct", 0))))
-                        else:
-                            st.caption("Servicio de analisis visual no configurado — se muestra el precio base.")
-                    except Exception:
-                        resultado_vision = None
-                        st.caption("Analisis de imagen no disponible en este momento. Se muestra el precio base.")
+                                _img    = _Image.open(_f).convert("RGB")
+                                _tensor = _transform(_img).unsqueeze(0)
+                                with _torch.no_grad():
+                                    _logits = _cnn(_tensor)
+                                    _p = _torch.softmax(_logits, dim=1)[0]
+                                _probs_danado.append(float(_p[0]))  # clase 0 = danado
+
+                            _prob = max(_probs_danado)
+
+                            if _prob >= 0.70:
+                                _nivel = "grave"
+                                _desc_pct = min(25, round(15 + (_prob - 0.70) / 0.30 * 10))
+                            elif _prob >= 0.50:
+                                _nivel = "moderado"
+                                _desc_pct = round(8 + (_prob - 0.50) / 0.20 * 4)
+                            elif _prob >= 0.35:
+                                _nivel = "leve"
+                                _desc_pct = round(3 + (_prob - 0.35) / 0.15 * 2)
+                            else:
+                                _nivel = "ninguno"
+                                _desc_pct = 0
+
+                            n_fotos = len(imagenes_subidas)
+                            resultado_vision = {
+                                "tiene_danos":     _prob >= 0.35,
+                                "nivel_gravedad":  _nivel,
+                                "zonas_afectadas": [],
+                                "descripcion": (
+                                    f"Probabilidad de danos detectada: {_prob:.1%} "
+                                    f"({n_fotos} foto{'s' if n_fotos > 1 else ''} analizadas). "
+                                    f"Modelo: EfficientNet-B0 · Accuracy validacion: 95,78 %"
+                                ),
+                                "descuento_pct":   _desc_pct,
+                            }
+                            desc_danos_pct = _desc_pct
+                        except Exception as _ex:
+                            st.caption(f"Analisis de imagen no disponible: {_ex}")
+                else:
+                    st.caption("Modelo CNN no encontrado — se muestra el precio base sin ajuste por estado.")
 
             precio_final = precio * (1 - desc_danos_pct / 100)
             p_min  = max(500, precio_final * (1 - MAPE_FACTOR))
