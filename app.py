@@ -257,23 +257,18 @@ def cargar_modelo():
     ruta = os.path.join(RUTA_BASE, "modelo_gbm.pkl")
     return joblib.load(ruta) if os.path.exists(ruta) else None
 
+_CLASES_CNN      = ['sin_danos', 'leve', 'moderado', 'severo']
+_DESC_POR_CLASE  = {'sin_danos': 0, 'leve': 10, 'moderado': 25, 'severo': 40}
+_COLOR_POR_CLASE = {'leve': '#f59e0b', 'moderado': '#f97316', 'severo': '#DC2626'}
+
 @st.cache_resource
 def cargar_modelo_cnn():
     try:
-        import torch
-        import torch.nn as nn
-        from torchvision import models
-        ruta = os.path.join(RUTA_BASE, "modelo_cnn.pt")
+        import onnxruntime as ort
+        ruta = os.path.join(RUTA_BASE, "modelo_cnn.onnx")
         if not os.path.exists(ruta):
             return None
-        m = models.efficientnet_b0(weights=None)
-        m.classifier = nn.Sequential(
-            nn.Dropout(p=0.4),
-            nn.Linear(m.classifier[1].in_features, 2),
-        )
-        m.load_state_dict(torch.load(ruta, map_location="cpu", weights_only=True))
-        m.eval()
-        return m
+        return ort.InferenceSession(ruta, providers=["CPUExecutionProvider"])
     except Exception:
         return None
 
@@ -359,7 +354,6 @@ SECCIONES = [
     "💰  Presupuesto",
     "📉  Depreciación",
     "📊  Explorador",
-    "🎯  Chollos",
 ]
 
 if "seccion_idx" not in st.session_state:
@@ -700,9 +694,9 @@ if seccion == SECCIONES[0]:
              "Error medio (MAE)",
              "En promedio, la estimación se desvía ±1.732 € del precio real del anuncio.",
              "#ff9500"),
-        (s4, "5",
+        (s4, "4",
              "Herramientas de análisis",
-             "Tasador, buscador por presupuesto, depreciación, explorador de variables y detector de chollos.",
+             "Tasador de precio con CNN de daños, buscador por presupuesto, análisis de depreciación y explorador de variables.",
              "#7928ca"),
     ]:
         col.markdown(f"""
@@ -765,17 +759,6 @@ if seccion == SECCIONES[0]:
         st.button("Ver relación entre características", key="btn_sec4", use_container_width=True, type="primary", on_click=_navegar, args=(4,))
 
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("""
-    <div class="home-card" style="border-left:4px solid #f59e0b;">
-        <span class="card-icon">🎯</span>
-        <h3>Detector de Chollos</h3>
-        <p>El modelo analiza los anuncios reales scrapeados de Coches.net y detecta aquellos cuyo precio
-           está significativamente por debajo del valor estimado — chollos reales con enlace directo al anuncio.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    st.button("Ver detector de chollos", key="btn_sec5", use_container_width=True, type="primary", on_click=_navegar, args=(5,))
-
-    st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(f"""
     <div class="insight">
         💡 <b>Sobre el modelo:</b> Se ha entrenado un Gradient Boosting Machine (GBM) sobre 80.528 anuncios
@@ -825,8 +808,9 @@ elif seccion == SECCIONES[1]:
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### Fotos del vehiculo *(opcional)*")
         st.caption(
-            "Sube una o varias fotos del coche. La IA analizara los desperfectos visibles "
-            "y ajustara el precio estimado segun el estado real del vehiculo."
+            "Si el coche esta en buen estado, sube una foto general del vehiculo. "
+            "Si tiene desperfectos, sube una foto centrada en la zona danada. "
+            "La IA ajustara el precio segun el estado detectado."
         )
         imagenes_subidas = st.file_uploader(
             "Selecciona fotos",
@@ -861,51 +845,41 @@ elif seccion == SECCIONES[1]:
                 if _cnn is not None:
                     with st.spinner("Analizando imagen con modelo CNN..."):
                         try:
-                            import torch as _torch
+                            import numpy as _np
                             from PIL import Image as _Image
-                            from torchvision import transforms as _tf
 
-                            _transform = _tf.Compose([
-                                _tf.Resize((224, 224)),
-                                _tf.ToTensor(),
-                                _tf.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-                            ])
+                            _mean = _np.array([0.485, 0.456, 0.406], dtype=_np.float32).reshape(3,1,1)
+                            _std  = _np.array([0.229, 0.224, 0.225], dtype=_np.float32).reshape(3,1,1)
 
-                            _probs_danado = []
+                            _probs_lista = []
                             for _f in imagenes_subidas:
-                                _img    = _Image.open(_f).convert("RGB")
-                                _tensor = _transform(_img).unsqueeze(0)
-                                with _torch.no_grad():
-                                    _logits = _cnn(_tensor)
-                                    _p = _torch.softmax(_logits, dim=1)[0]
-                                _probs_danado.append(float(_p[0]))  # clase 0 = danado
+                                _img = _Image.open(_f).convert("RGB").resize((224, 224))
+                                _arr = (_np.array(_img, dtype=_np.float32) / 255.0
+                                        ).transpose(2,0,1)
+                                _arr = (_arr - _mean) / _std
+                                _out = _cnn.run(None, {"input": _arr[_np.newaxis]})[0][0]
+                                _e   = _np.exp(_out - _out.max())
+                                _probs_lista.append((_e / _e.sum()).tolist())
 
-                            _prob = max(_probs_danado)
-
-                            if _prob >= 0.70:
-                                _nivel = "grave"
-                                _desc_pct = min(25, round(15 + (_prob - 0.70) / 0.30 * 10))
-                            elif _prob >= 0.50:
-                                _nivel = "moderado"
-                                _desc_pct = round(8 + (_prob - 0.50) / 0.20 * 4)
-                            elif _prob >= 0.35:
-                                _nivel = "leve"
-                                _desc_pct = round(3 + (_prob - 0.35) / 0.15 * 2)
-                            else:
-                                _nivel = "ninguno"
-                                _desc_pct = 0
+                            # Promedio entre fotos -> clase con mayor probabilidad media
+                            _avg       = [sum(p[i] for p in _probs_lista) / len(_probs_lista)
+                                          for i in range(4)]
+                            _clase_idx = _avg.index(max(_avg))
+                            _nivel     = _CLASES_CNN[_clase_idx]
+                            _desc_pct  = _DESC_POR_CLASE[_nivel]
 
                             n_fotos = len(imagenes_subidas)
                             resultado_vision = {
-                                "tiene_danos":     _prob >= 0.35,
-                                "nivel_gravedad":  _nivel,
-                                "zonas_afectadas": [],
+                                "tiene_danos":    _nivel != "sin_danos",
+                                "nivel_gravedad": _nivel,
+                                "probabilidades": {c: round(_avg[i], 3)
+                                                   for i, c in enumerate(_CLASES_CNN)},
                                 "descripcion": (
-                                    f"Probabilidad de danos detectada: {_prob:.1%} "
+                                    f"Clase detectada: {_nivel} "
                                     f"({n_fotos} foto{'s' if n_fotos > 1 else ''} analizadas). "
-                                    f"Modelo: EfficientNet-B0 · Accuracy validacion: 95,78 %"
+                                    f"Modelo: EfficientNet-B0 · 4 clases"
                                 ),
-                                "descuento_pct":   _desc_pct,
+                                "descuento_pct": _desc_pct,
                             }
                             desc_danos_pct = _desc_pct
                         except Exception as _ex:
@@ -928,9 +902,11 @@ elif seccion == SECCIONES[1]:
             # Bloque de desperfectos para incrustar en la tarjeta
             if resultado_vision and desc_danos_pct > 0:
                 _niv = resultado_vision.get("nivel_gravedad", "")
-                _col_niv = {"leve": "#f59e0b", "moderado": "#f97316", "grave": "#DC2626"}.get(_niv, GRIS)
-                _zonas = ", ".join(resultado_vision.get("zonas_afectadas", [])) or "No especificadas"
+                _col_niv  = _COLOR_POR_CLASE.get(_niv, GRIS)
                 _desc_txt = resultado_vision.get("descripcion", "")
+                _probs_txt = "  ".join(
+                    f"{c}: {v:.0%}" for c, v in resultado_vision.get("probabilidades", {}).items()
+                )
                 _bloque_danos = f"""
                 <div style="margin-top:14px;padding:10px 14px;background:#FEF2F2;
                             border-left:3px solid {_col_niv};border-radius:4px;">
@@ -938,9 +914,9 @@ elif seccion == SECCIONES[1]:
                         Desperfectos detectados &mdash; -{desc_danos_pct}% aplicado al precio base
                     </div>
                     <div style="font-size:0.8rem;color:#374151;">
-                        <b>Gravedad:</b> {_niv.capitalize()} &nbsp;|&nbsp; <b>Zonas:</b> {_zonas}
+                        <b>Severidad:</b> {_niv.capitalize()}
                     </div>
-                    <div style="font-size:0.78rem;color:#6B7280;margin-top:4px;">{_desc_txt}</div>
+                    <div style="font-size:0.78rem;color:#6B7280;margin-top:4px;">{_probs_txt}</div>
                     <div style="font-size:0.75rem;color:#9CA3AF;margin-top:6px;">
                         Precio base modelo: {precio:,.0f} &euro; &rarr; Precio ajustado: {precio_final:,.0f} &euro;
                     </div>
@@ -1583,194 +1559,3 @@ elif seccion == SECCIONES[4]:
                 c3.metric(f"Media {ETIQUETAS[var_y]}", f"{df_viz[var_y].mean():,.1f}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# SECCIÓN 5 — DETECTOR DE CHOLLOS
-# ══════════════════════════════════════════════════════════════════════════════
-elif seccion == SECCIONES[5]:
-    st.markdown("""
-    <h2 style="margin-bottom:4px;">🎯 Detector de Chollos</h2>
-    <p style="color:#6B7280;margin-bottom:12px;">
-        Anuncios reales de Coches.net donde el precio pedido está por debajo del valor estimado por el modelo.
-    </p>
-    <div style="background:#FFF7ED;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:4px;margin-bottom:20px;font-size:0.85rem;color:#78350F;line-height:1.6;">
-        <b>¿Qué descuento es realista?</b> El modelo tiene un error medio de ±11 %, por lo que descuentos
-        inferiores al 15 % pueden ser simplemente ruido estadístico. Un descuento del <b>15-25 %</b> empieza
-        a ser significativo (2.500-5.000 € en un coche de 20.000 €) y difícil de justificar por desgaste normal.
-        Por eso solo se muestran anuncios con <b>descuento entre el 15 % y el 25 %</b>: por debajo es ruido,
-        por encima suele indicar que el modelo no conoce bien ese vehículo concreto.
-    </div>
-    """, unsafe_allow_html=True)
-
-    RUTA_SCRAPEADOS = os.path.join(RUTA_BASE, "coches_scrapeados.csv")
-
-    if not os.path.exists(RUTA_SCRAPEADOS):
-        st.info(
-            "No se encontró **coches_scrapeados.csv**. "
-            "Ejecuta `python scraper_coches.py` para generar los datos."
-        )
-        st.stop()
-
-    @st.cache_data
-    def cargar_scrapeados():
-        d = pd.read_csv(RUTA_SCRAPEADOS, encoding="utf-8-sig")
-        return d
-
-    @st.cache_data
-    def _modelos_por_marca():
-        """Devuelve dict marca -> lista de modelos conocidos en el training."""
-        return (
-            df.groupby("marca")["modelo"]
-            .apply(lambda s: s.dropna().unique().tolist())
-            .to_dict()
-        )
-
-    def _modelo_mas_cercano(marca, modelo_scr, conocidos_por_marca):
-        from difflib import get_close_matches
-        candidatos = conocidos_por_marca.get(marca, [])
-        if not candidatos:
-            return modelo_scr
-        modelo_l  = str(modelo_scr).lower().strip()
-        marca_l   = marca.lower()
-
-        # Quitar prefijo de marca de los modelos conocidos ("BMW X1" -> "x1")
-        def _quitar_prefijo(s):
-            s2 = s.lower().strip()
-            return s2[len(marca_l):].strip() if s2.startswith(marca_l) else s2
-
-        pares = [(c, _quitar_prefijo(c)) for c in candidatos]  # (original, sin_prefijo)
-
-        # 1. Exacto
-        for c, cn in pares:
-            if cn == modelo_l or c.lower() == modelo_l:
-                return c
-        # 2. Nombre corto conocido contenido en el modelo scrapeado ("x1" en "ix1 xdrive30")
-        for c, cn in sorted(pares, key=lambda x: len(x[1]), reverse=True):
-            if cn and cn in modelo_l:
-                return c
-        # 3. Primer token del scrapeado contiene o está contenido en el nombre corto
-        primer_token = modelo_l.split()[0] if modelo_l.split() else modelo_l
-        for c, cn in sorted(pares, key=lambda x: len(x[1]), reverse=True):
-            if cn and (cn in primer_token or primer_token in cn):
-                return c
-        # 4. Fuzzy del primer token contra nombres cortos
-        nombres_cortos = [cn for _, cn in pares if cn]
-        matches = get_close_matches(primer_token, nombres_cortos, n=1, cutoff=0.6)
-        if matches:
-            return pares[nombres_cortos.index(matches[0])][0]
-        # 5. Fuzzy del modelo completo contra nombres cortos
-        matches = get_close_matches(modelo_l, nombres_cortos, n=1, cutoff=0.45)
-        if matches:
-            return pares[nombres_cortos.index(matches[0])][0]
-        return None  # sin coincidencia: descartar este anuncio
-
-    @st.cache_data
-    def predecir_chollos(hash_key):
-        d = cargar_scrapeados().copy()
-        conocidos = _modelos_por_marca()
-        FEATURES_M = ["año", "potencia_cv", "kilometraje_km", "antiguedad", "km_por_año",
-                      "marca", "modelo", "combustible", "transmision",
-                      "etiqueta_ambiental", "tipo_venta"]
-        # Mapear cada modelo al más cercano conocido; None = sin coincidencia → descartar
-        d["modelo_pred"] = d.apply(
-            lambda r: _modelo_mas_cercano(r["marca"], r["modelo"], conocidos), axis=1
-        )
-        d = d[d["modelo_pred"].notna()].copy()
-        X = d[FEATURES_M].copy()
-        X["modelo"] = d["modelo_pred"]
-        preds = modelo_ml.predict(X)
-        d["precio_modelo"] = preds.round(0)
-        d["ahorro_eur"]    = (d["precio_modelo"] - d["precio_eur"]).round(0)
-        d["descuento_pct"] = (d["ahorro_eur"] / d["precio_modelo"].replace(0, 1) * 100).round(1)
-        return d.drop(columns=["modelo_pred"])
-
-    import hashlib
-    mtime = str(os.path.getmtime(RUTA_SCRAPEADOS))
-    df_pred = predecir_chollos(mtime)
-
-    col_filt, col_main = st.columns([1, 3], gap="large")
-
-    with col_filt:
-        st.markdown("**Filtros**")
-        umbral    = st.slider("Descuento mínimo (%)", 15, 25, 20, 1)
-        precio_max_c = st.number_input("Precio máximo (€)", value=50000, step=1000, min_value=1000)
-        marcas_c  = st.multiselect("Marca", sorted(df_pred["marca"].dropna().unique()), default=[])
-        comb_c    = st.multiselect("Combustible", sorted(df_pred["combustible"].dropna().unique()), default=[])
-        fecha_scr = df_pred["fecha_scraping"].iloc[0] if "fecha_scraping" in df_pred.columns else "—"
-        st.caption(f"Datos scrapeados: {fecha_scr} · {len(df_pred):,} anuncios")
-
-    with col_main:
-        mask = (
-            (df_pred["descuento_pct"] >= umbral) &
-            (df_pred["descuento_pct"] <= 25) &
-            (df_pred["precio_eur"]    <= precio_max_c) &
-            (df_pred["precio_eur"]    > 500)
-        )
-        if marcas_c:
-            mask &= df_pred["marca"].isin(marcas_c)
-        if comb_c:
-            mask &= df_pred["combustible"].isin(comb_c)
-
-        df_c = df_pred[mask].sort_values("descuento_pct", ascending=False).reset_index(drop=True)
-
-        k1, k2, k3 = st.columns(3)
-        k1.metric("Chollos encontrados", f"{len(df_c):,}")
-        k2.metric("Descuento medio",
-                  f"{df_c['descuento_pct'].mean():.1f} %" if len(df_c) else "—")
-        k3.metric("Ahorro medio",
-                  f"{df_c['ahorro_eur'].mean():,.0f} €" if len(df_c) else "—")
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        if len(df_c) == 0:
-            st.info("No se encontraron chollos con estos filtros. Reduce el descuento mínimo o amplía los criterios.")
-        else:
-            st.markdown("""
-            <div style="background:#FEF2F2;border-left:3px solid #DC2626;padding:10px 14px;
-                        border-radius:4px;margin-bottom:14px;font-size:0.82rem;color:#7F1D1D;line-height:1.7;">
-            <b>⚠️ Antes de tomar cualquier decisión, ten en cuenta:</b><br>
-            &bull; El modelo predice el precio a partir de marca, modelo, año, km, potencia y combustible.
-            <b>No tiene en cuenta</b> el estado real del vehículo, el historial de accidentes, las reparaciones previas,
-            el número de propietarios ni si tiene la ITV en vigor.<br>
-            &bull; Un precio bajo puede deberse a <b>daños estéticos o mecánicos no declarados</b>,
-            a una situación urgente de venta o a diferencias fiscales regionales
-            (p. ej. IGIC en Canarias frente al IVA peninsular).<br>
-            &bull; La estimación es una <b>media estadística</b>: dos coches idénticos en papel
-            pueden diferir miles de euros según su mantenimiento real.<br>
-            &bull; <b>Solicita siempre el informe de historial del vehículo</b> (DGT, Carfax o similar)
-            y realiza una inspección presencial o con un mecánico de confianza antes de comprar.<br>
-            &bull; Esta herramienta es un <b>punto de partida para detectar oportunidades</b>,
-            no un sustituto de la debida diligencia antes de una compra.
-            </div>
-            """, unsafe_allow_html=True)
-            df_show = df_c[[
-                "marca", "modelo", "año", "kilometraje_km", "potencia_cv", "combustible",
-                "precio_eur", "precio_modelo", "descuento_pct", "ahorro_eur",
-                "provincia", "url",
-            ]].rename(columns={
-                "año":            "Año",
-                "kilometraje_km": "Km",
-                "potencia_cv":    "CV",
-                "combustible":    "Combustible",
-                "precio_eur":     "Precio (€)",
-                "precio_modelo":  "Modelo estima (€)",
-                "descuento_pct":  "Descuento %",
-                "ahorro_eur":     "Ahorro (€)",
-                "provincia":      "Provincia",
-                "url":            "Anuncio",
-                "marca":          "Marca",
-                "modelo":         "Modelo",
-            })
-            st.dataframe(
-                df_show,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Anuncio": st.column_config.LinkColumn("Anuncio", display_text="Ver"),
-                    "Descuento %": st.column_config.NumberColumn(format="%.1f %%"),
-                    "Precio (€)":     st.column_config.NumberColumn(format="%,.0f €"),
-                    "Modelo estima (€)": st.column_config.NumberColumn(format="%,.0f €"),
-                    "Ahorro (€)":     st.column_config.NumberColumn(format="%,.0f €"),
-                    "Km":             st.column_config.NumberColumn(format="%,.0f"),
-                    "CV":             st.column_config.NumberColumn(format="%d"),
-                },
-            )

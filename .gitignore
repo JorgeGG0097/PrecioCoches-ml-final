@@ -4,3 +4,9 @@ __pycache__/
 *.pyo
 .env
 fotos/
+dataset/
+anujms/
+prajwalbhamere/
+modelo_cnn.pt
+etiquetas.csv
+etiquetar_fotos.py

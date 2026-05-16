@@ -1,25 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-modelo_imagenes.py  --  Entrena un clasificador de danos en coches (EfficientNet-B0 fine-tuning).
+modelo_imagenes.py  --  Clasificador de danos en coches (EfficientNet-B0, 4 clases).
 
 Uso:
-    python modelo_imagenes.py           # entrena y guarda modelo_cnn.pt
-    python modelo_imagenes.py --test <ruta_imagen>  # predice una imagen
-    python modelo_imagenes.py --eval    # evalua el modelo guardado en el conjunto de validacion
+    python modelo_imagenes.py                          # entrena
+    python modelo_imagenes.py --test <ruta_imagen>     # predice una imagen
+    python modelo_imagenes.py --eval                   # muestra metricas guardadas
 
 Clases:
-    0 -> sin_danos   (coche en buen estado visual)
-    1 -> danado      (coche con golpes, abolladuras o rayones)
+    0 -> sin_danos
+    1 -> leve
+    2 -> moderado
+    3 -> severo
 
 Salida:
-    modelo_cnn.pt            modelo entrenado (pesos completos)
-    modelo_cnn_metricas.json metricas de entrenamiento para la memoria
+    modelo_cnn.pt              pesos del mejor modelo
+    modelo_cnn_metricas.json   metricas de entrenamiento
 """
 
 import sys
 import os
 import json
-import random
 import time
 from pathlib import Path
 
@@ -30,20 +31,20 @@ from torchvision import models, transforms
 from torchvision.models import EfficientNet_B0_Weights
 from PIL import Image
 
-RUTA_BASE   = Path(__file__).parent
-DIR_DATOS   = RUTA_BASE / "fotos"
-MODELO_PT   = RUTA_BASE / "modelo_cnn.pt"
-METRICAS_J  = RUTA_BASE / "modelo_cnn_metricas.json"
+RUTA_BASE  = Path(__file__).parent
+DIR_DATOS  = RUTA_BASE / "dataset"
+MODELO_PT  = RUTA_BASE / "modelo_cnn.pt"
+METRICAS_J = RUTA_BASE / "modelo_cnn_metricas.json"
+
+CLASES = ['sin_danos', 'leve', 'moderado', 'severo']
 
 # ── Hiperparametros ────────────────────────────────────────────────────────────
-EPOCHS      = 12
-BATCH_SIZE  = 32
-LR          = 1e-4
-VAL_SPLIT   = 0.2
-SEED        = 42
-IMG_SIZE    = 224
-DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+EPOCHS     = 15
+BATCH_SIZE = 32
+LR         = 1e-4
+IMG_SIZE   = 224
+DEVICE     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+EXTENSIONES = {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}
 
 # ── Transforms ────────────────────────────────────────────────────────────────
 TRAIN_TF = transforms.Compose([
@@ -62,14 +63,10 @@ VAL_TF = transforms.Compose([
 ])
 
 
-CLASES     = ['danado', 'sin_danos']   # 0 = danado, 1 = sin_danos
-EXTENSIONES = {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}
-
-
+# ── Dataset ────────────────────────────────────────────────────────────────────
 class DamageDataset(Dataset):
-    """Lee solo las carpetas 'danado' y 'sin_danos', ignora el resto."""
     def __init__(self, samples, transform=None):
-        self.samples   = samples   # lista de (ruta, label)
+        self.samples   = samples
         self.transform = transform
         self.targets   = [s[1] for s in samples]
 
@@ -84,10 +81,10 @@ class DamageDataset(Dataset):
         return img, label
 
 
-def _cargar_muestras():
+def _cargar_split(split: str):
     muestras = []
     for label, cls in enumerate(CLASES):
-        carpeta = DIR_DATOS / cls
+        carpeta = DIR_DATOS / split / cls
         if not carpeta.exists():
             raise FileNotFoundError(f"No se encontro: {carpeta}")
         for ruta in carpeta.iterdir():
@@ -96,38 +93,30 @@ def _cargar_muestras():
     return muestras
 
 
-# ── Construir datasets ─────────────────────────────────────────────────────────
 def construir_datasets():
-    todas = _cargar_muestras()
-    random.seed(SEED)
-    random.shuffle(todas)
-    split     = int(len(todas) * VAL_SPLIT)
-    train_muestras = todas[split:]
-    val_muestras   = todas[:split]
+    train_ds = DamageDataset(_cargar_split("train"), transform=TRAIN_TF)
+    val_ds   = DamageDataset(_cargar_split("val"),   transform=VAL_TF)
 
-    train_ds = DamageDataset(train_muestras, transform=TRAIN_TF)
-    val_ds   = DamageDataset(val_muestras,   transform=VAL_TF)
-
-    print(f"Clases: {CLASES}  (0=danado, 1=sin_danos)")
-    print(f"Train: {len(train_ds)} | Val: {len(val_ds)}")
-    return train_ds, val_ds, CLASES
+    counts = [train_ds.targets.count(i) for i in range(len(CLASES))]
+    print(f"Clases: {CLASES}")
+    for cls, n in zip(CLASES, counts):
+        print(f"  train/{cls}: {n}")
+    print(f"  val total: {len(val_ds)}")
+    return train_ds, val_ds
 
 
 def construir_sampler(train_ds):
-    labels = train_ds.targets
-    counts = [labels.count(c) for c in range(len(CLASES))]
-    weights = [1.0 / counts[l] for l in labels]
+    counts  = [train_ds.targets.count(i) for i in range(len(CLASES))]
+    weights = [1.0 / counts[l] for l in train_ds.targets]
     return WeightedRandomSampler(weights, len(weights))
 
 
 # ── Modelo ─────────────────────────────────────────────────────────────────────
-def construir_modelo(n_clases=2):
+def construir_modelo(n_clases=4):
     model = models.efficientnet_b0(weights=EfficientNet_B0_Weights.IMAGENET1K_V1)
-    # Congelar capas base, solo entrenar las ultimas + clasificador
     for name, param in model.features.named_parameters():
         layer_idx = int(name.split(".")[0]) if name.split(".")[0].isdigit() else -1
-        param.requires_grad = layer_idx >= 6   # descongelar bloques 6 y 7
-    # Reemplazar clasificador
+        param.requires_grad = layer_idx >= 6
     in_features = model.classifier[1].in_features
     model.classifier = nn.Sequential(
         nn.Dropout(p=0.4),
@@ -136,16 +125,29 @@ def construir_modelo(n_clases=2):
     return model.to(DEVICE)
 
 
+# ── Metricas multiclase ────────────────────────────────────────────────────────
+def calcular_f1_macro(all_preds, all_labels, n_clases):
+    f1s = []
+    for c in range(n_clases):
+        tp = sum(p == c and l == c for p, l in zip(all_preds, all_labels))
+        fp = sum(p == c and l != c for p, l in zip(all_preds, all_labels))
+        fn = sum(p != c and l == c for p, l in zip(all_preds, all_labels))
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        rec  = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1s.append(2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0)
+    return sum(f1s) / len(f1s), f1s
+
+
 # ── Entrenamiento ──────────────────────────────────────────────────────────────
 def entrenar():
     print(f"Dispositivo: {DEVICE}")
-    train_ds, val_ds, clases = construir_datasets()
+    train_ds, val_ds = construir_datasets()
 
     sampler      = construir_sampler(train_ds)
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, sampler=sampler, num_workers=0)
     val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False,   num_workers=0)
 
-    model     = construir_modelo(len(clases))
+    model     = construir_modelo(len(CLASES))
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=LR)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
@@ -173,31 +175,29 @@ def entrenar():
 
         # ── Val ──
         model.eval()
-        val_correct, val_total, val_loss_sum = 0, 0, 0.0
-        tp = fp = fn = tn = 0
+        val_correct, val_total = 0, 0
+        all_preds, all_labels  = [], []
         with torch.no_grad():
             for imgs, labels in val_loader:
                 imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
-                out  = model(imgs)
-                loss = criterion(out, labels)
-                val_loss_sum += loss.item() * imgs.size(0)
-                preds = out.argmax(1)
-                val_correct += (preds == labels).sum().item()
-                val_total   += imgs.size(0)
-                # Para F1 — clase 1 = danado
-                tp += ((preds == 1) & (labels == 1)).sum().item()
-                fp += ((preds == 1) & (labels == 0)).sum().item()
-                fn += ((preds == 0) & (labels == 1)).sum().item()
-                tn += ((preds == 0) & (labels == 0)).sum().item()
+                preds = model(imgs).argmax(1)
+                val_correct   += (preds == labels).sum().item()
+                val_total     += imgs.size(0)
+                all_preds     += preds.cpu().tolist()
+                all_labels    += labels.cpu().tolist()
 
-        val_acc  = val_correct / val_total
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1        = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        val_acc        = val_correct / val_total
+        f1_macro, f1s  = calcular_f1_macro(all_preds, all_labels, len(CLASES))
 
         scheduler.step()
-        historial.append({"epoch": epoch, "train_acc": round(train_acc, 4), "val_acc": round(val_acc, 4), "f1": round(f1, 4)})
-        print(f"Epoch {epoch:2}/{EPOCHS}  train_acc={train_acc:.3f}  val_acc={val_acc:.3f}  F1={f1:.3f}")
+        historial.append({
+            "epoch": epoch,
+            "train_acc": round(train_acc, 4),
+            "val_acc":   round(val_acc, 4),
+            "f1_macro":  round(f1_macro, 4),
+        })
+        print(f"Epoch {epoch:2}/{EPOCHS}  train={train_acc:.3f}  val={val_acc:.3f}  F1_macro={f1_macro:.3f}  "
+              + "  ".join(f"{c}={f:.2f}" for c, f in zip(CLASES, f1s)))
 
         if val_acc > mejor_val_acc:
             mejor_val_acc = val_acc
@@ -205,51 +205,68 @@ def entrenar():
             print(f"             -> Mejor modelo guardado (val_acc={val_acc:.4f})")
 
     elapsed = round(time.time() - t0, 1)
-    mejor = max(historial, key=lambda x: x["val_acc"])
+    mejor   = max(historial, key=lambda x: x["val_acc"])
+    _, f1s_mejor = calcular_f1_macro(all_preds, all_labels, len(CLASES))
+
     metricas = {
-        "clases":      clases,
-        "n_train":     len(train_ds),
-        "n_val":       len(val_ds),
-        "epochs":      EPOCHS,
-        "mejor_epoch": mejor["epoch"],
-        "val_acc":     mejor["val_acc"],
-        "f1_danado":   mejor["f1"],
-        "tiempo_seg":  elapsed,
-        "dispositivo": str(DEVICE),
-        "historial":   historial,
+        "clases":        CLASES,
+        "n_train":       len(train_ds),
+        "n_val":         len(val_ds),
+        "epochs":        EPOCHS,
+        "mejor_epoch":   mejor["epoch"],
+        "val_acc":       mejor["val_acc"],
+        "f1_macro":      mejor["f1_macro"],
+        "f1_por_clase":  {c: round(f, 4) for c, f in zip(CLASES, f1s_mejor)},
+        "tiempo_seg":    elapsed,
+        "dispositivo":   str(DEVICE),
+        "historial":     historial,
     }
     with open(METRICAS_J, "w", encoding="utf-8") as f:
         json.dump(metricas, f, ensure_ascii=False, indent=2)
 
     print(f"\nEntrenamiento completado en {elapsed}s")
-    print(f"Mejor val_acc: {mejor_val_acc:.4f}  |  modelo guardado en {MODELO_PT}")
-    print(f"Metricas guardadas en {METRICAS_J}")
+    print(f"Mejor val_acc: {mejor_val_acc:.4f}  |  guardado en {MODELO_PT}")
+
+    # ── Exportar a ONNX (mas ligero para Streamlit Cloud) ──────────────────────
+    try:
+        model_export = construir_modelo(len(CLASES))
+        model_export.load_state_dict(torch.load(MODELO_PT, map_location="cpu", weights_only=True))
+        model_export.eval()
+        dummy  = torch.zeros(1, 3, IMG_SIZE, IMG_SIZE)
+        onnx_path = str(RUTA_BASE / "modelo_cnn.onnx")
+        torch.onnx.export(
+            model_export, dummy, onnx_path,
+            input_names=["input"], output_names=["output"],
+            dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
+            opset_version=17,
+        )
+        print(f"Exportado a ONNX: {onnx_path}")
+    except Exception as e:
+        print(f"Exportacion ONNX fallida (no critico): {e}")
+
     return metricas
 
 
-# ── Prediccion de una imagen ───────────────────────────────────────────────────
-def predecir(ruta_imagen: str, umbral: float = 0.5) -> dict:
+# ── Prediccion ─────────────────────────────────────────────────────────────────
+def predecir(ruta_imagen: str) -> dict:
     if not os.path.exists(MODELO_PT):
-        raise FileNotFoundError(f"No se encontro el modelo: {MODELO_PT}. Ejecuta primero sin --test.")
+        raise FileNotFoundError(f"Modelo no encontrado: {MODELO_PT}. Entrena primero.")
 
-    model = construir_modelo(2)
+    model = construir_modelo(len(CLASES))
     model.load_state_dict(torch.load(MODELO_PT, map_location=DEVICE, weights_only=True))
     model.eval()
 
-    img = Image.open(ruta_imagen).convert("RGB")
+    img    = Image.open(ruta_imagen).convert("RGB")
     tensor = VAL_TF(img).unsqueeze(0).to(DEVICE)
 
     with torch.no_grad():
-        logits = model(tensor)
-        probs  = torch.softmax(logits, dim=1)[0]
+        probs = torch.softmax(model(tensor), dim=1)[0].cpu().tolist()
 
-    prob_danado = float(probs[1])
-    clase = "danado" if prob_danado >= umbral else "sin_danos"
-
+    clase_idx = probs.index(max(probs))
     return {
-        "clase":       clase,
-        "prob_danado": round(prob_danado, 4),
-        "prob_sano":   round(float(probs[0]), 4),
+        "clase":       CLASES[clase_idx],
+        "clase_idx":   clase_idx,
+        "probabilidades": {c: round(p, 4) for c, p in zip(CLASES, probs)},
     }
 
 
@@ -258,22 +275,22 @@ if __name__ == "__main__":
     if "--test" in sys.argv:
         idx = sys.argv.index("--test")
         if idx + 1 < len(sys.argv):
-            ruta = sys.argv[idx + 1]
-            resultado = predecir(ruta)
-            print(f"\nImagen: {ruta}")
-            print(f"Clase predicha : {resultado['clase']}")
-            print(f"Prob. danado   : {resultado['prob_danado']:.1%}")
-            print(f"Prob. sin danos: {resultado['prob_sano']:.1%}")
+            res = predecir(sys.argv[idx + 1])
+            print(f"\nClase: {res['clase']}")
+            for c, p in res["probabilidades"].items():
+                print(f"  {c}: {p:.1%}")
         else:
-            print("Indica la ruta de la imagen: python modelo_imagenes.py --test <ruta>")
+            print("Uso: python modelo_imagenes.py --test <ruta_imagen>")
     elif "--eval" in sys.argv:
         if not os.path.exists(METRICAS_J):
-            print("No hay metricas guardadas. Entrena primero.")
+            print("No hay metricas. Entrena primero.")
         else:
             with open(METRICAS_J, encoding="utf-8") as f:
                 m = json.load(f)
             print(f"val_acc  : {m['val_acc']:.4f}")
-            print(f"F1 danado: {m['f1_danado']:.4f}")
+            print(f"F1 macro : {m['f1_macro']:.4f}")
             print(f"Mejor epoch: {m['mejor_epoch']}/{m['epochs']}")
+            for c, f in m["f1_por_clase"].items():
+                print(f"  F1 {c}: {f:.4f}")
     else:
         entrenar()
