@@ -10,7 +10,7 @@ import pandas as pd
 import numpy as np
 
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.ensemble import HistGradientBoostingRegressor, RandomForestRegressor
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.pipeline import Pipeline
@@ -115,12 +115,78 @@ rangos = {
 with open(os.path.join(RUTA_SCRIPT, "rangos_numericos.json"), "w", encoding="utf-8") as f:
     json.dump(rangos, f, ensure_ascii=False, indent=2)
 
+modelos_metricas = {
+    "gbm": {"nombre": "GBM (Gradient Boosting)", "r2": round(r2_test, 4), "mae": int(mae_test)}
+}
+
 with open(os.path.join(RUTA_SCRIPT, "features_info.json"), "w", encoding="utf-8") as f:
     json.dump({"variables_numericas": variables_numericas,
                "variables_categoricas": variables_categoricas,
                "año_actual": AÑO_ACTUAL,
-               "mae_test": int(mae_test)}, f, ensure_ascii=False, indent=2)
+               "mae_test": int(mae_test),
+               "modelos": modelos_metricas}, f, ensure_ascii=False, indent=2)
 
 print("Artefactos guardados en la carpeta definitivo/")
 print(f"\nMAE final del modelo: {mae_test:,.0f} EUR")
+
+# ── Modelos adicionales para comparativa en la web ────────────────────────────
+def _nuevo_preprocesador():
+    return ColumnTransformer(transformers=[
+        ("num", Pipeline([("imputer", SimpleImputer(strategy="median"))]), variables_numericas),
+        ("cat", Pipeline([
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("onehot",  OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+        ]), variables_categoricas),
+    ])
+
+modelos_extra = [
+    ("rf", "Random Forest", RandomForestRegressor(
+        n_estimators=120, max_depth=15, min_samples_leaf=5,
+        random_state=RANDOM_STATE, n_jobs=-1)),
+]
+
+try:
+    from xgboost import XGBRegressor
+    modelos_extra.append(("xgb", "XGBoost", XGBRegressor(
+        n_estimators=300, learning_rate=0.05, max_depth=6,
+        subsample=0.8, colsample_bytree=0.8,
+        random_state=RANDOM_STATE, n_jobs=-1, verbosity=0)))
+except ImportError:
+    print("  XGBoost no disponible, se omite.")
+
+try:
+    from lightgbm import LGBMRegressor
+    modelos_extra.append(("lgbm", "LightGBM", LGBMRegressor(
+        n_estimators=300, learning_rate=0.05, max_depth=8, num_leaves=50,
+        random_state=RANDOM_STATE, n_jobs=-1, verbose=-1)))
+except ImportError:
+    print("  LightGBM no disponible, se omite.")
+
+try:
+    from catboost import CatBoostRegressor
+    modelos_extra.append(("cat", "CatBoost", CatBoostRegressor(
+        iterations=300, learning_rate=0.05, depth=8,
+        random_state=RANDOM_STATE, verbose=0)))
+except ImportError:
+    print("  CatBoost no disponible, se omite.")
+
+print("\nEntrenando modelos adicionales para comparativa...")
+for clave, nombre, estimador in modelos_extra:
+    print(f"  {nombre}...", end="", flush=True)
+    pipe = Pipeline([("preprocesado", _nuevo_preprocesador()), ("modelo", estimador)])
+    pipe.fit(X_train, y_train)
+    r2_  = r2_score(y_test, pipe.predict(X_test))
+    mae_ = mean_absolute_error(y_test, pipe.predict(X_test))
+    print(f" R2={r2_:.4f}  MAE={mae_:,.0f} EUR")
+    joblib.dump(pipe, os.path.join(RUTA_SCRIPT, f"modelo_{clave}.pkl"), compress=3)
+    modelos_metricas[clave] = {"nombre": nombre, "r2": round(r2_, 4), "mae": int(mae_)}
+
+with open(os.path.join(RUTA_SCRIPT, "features_info.json"), "w", encoding="utf-8") as f:
+    json.dump({"variables_numericas": variables_numericas,
+               "variables_categoricas": variables_categoricas,
+               "año_actual": AÑO_ACTUAL,
+               "mae_test": int(mae_test),
+               "modelos": modelos_metricas}, f, ensure_ascii=False, indent=2)
+
+print("\nTodos los modelos guardados.")
 print("Siguiente paso: streamlit run app.py")

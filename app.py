@@ -262,6 +262,25 @@ _DESC_POR_CLASE  = {'sin_danos': 0, 'leve': 10, 'moderado': 25, 'severo': 40}
 _COLOR_POR_CLASE = {'leve': '#f59e0b', 'moderado': '#f97316', 'severo': '#DC2626'}
 
 @st.cache_resource
+def cargar_todos_modelos():
+    claves = [
+        ("rf",   "Random Forest"),
+        ("xgb",  "XGBoost"),
+        ("lgbm", "LightGBM"),
+        ("cat",  "CatBoost"),
+    ]
+    resultado = {}
+    for clave, nombre in claves:
+        ruta = os.path.join(RUTA_BASE, f"modelo_{clave}.pkl")
+        if os.path.exists(ruta):
+            try:
+                resultado[nombre] = joblib.load(ruta)
+            except Exception:
+                pass
+    return resultado
+
+
+@st.cache_resource
 def cargar_modelo_cnn():
     try:
         import onnxruntime as ort
@@ -333,8 +352,9 @@ def cargar_json(nombre):
 
 
 # ── Carga ──────────────────────────────────────────────────────────────────────
-modelo_ml  = cargar_modelo()
-df         = cargar_datos()
+modelo_ml    = cargar_modelo()
+modelos_extra = cargar_todos_modelos()
+df           = cargar_datos()
 categorias = cargar_json("categorias.json")
 rangos     = cargar_json("rangos_numericos.json")
 info_model = cargar_json("features_info.json")
@@ -435,6 +455,7 @@ def _generar_pdf_tasacion(
     edades_rng, precios_edad, ant,
     km_rng, precios_km_suave, km_sel,
     tabla_sim,
+    precios_modelos=None,
 ):
     import io, matplotlib, matplotlib.pyplot as plt
     from fpdf import FPDF
@@ -556,18 +577,20 @@ def _generar_pdf_tasacion(
     pdf.set_xy(10, 82)
     pdf.cell(190, 12, f"{precio:,.0f} EUR", align="C", ln=True)
 
+    signo_es = "por encima" if diff >= 0 else "por debajo"
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(*GRIS_PDF)
     pdf.set_xy(10, 95)
     pdf.cell(190, 6,
-        f"Intervalo de mercado: {p_min:,.0f} EUR  -  {p_max:,.0f} EUR   (+/-{pct_intervalo}%)",
-        align="C", ln=True)
-
-    signo_es = "por encima" if diff >= 0 else "por debajo"
-    pdf.set_xy(10, 101)
-    pdf.cell(190, 6,
         f"{'+'if diff>=0 else ''}{diff:,.0f} EUR {signo_es} de la mediana de {marca}",
         align="C", ln=True)
+
+    # Precios de otros modelos
+    if precios_modelos:
+        pdf.set_font("Helvetica", "I", 8)
+        txt = "  |  ".join(f"{nm}: {p:,.0f} EUR" for nm, p in precios_modelos.items())
+        pdf.set_xy(10, 102)
+        pdf.cell(190, 5, txt, align="C", ln=True)
     pdf.set_text_color(*NEGRO)
 
     # Fiabilidad del modelo
@@ -837,6 +860,14 @@ elif seccion == SECCIONES[1]:
 
             precio = modelo_ml.predict(entrada)[0]
 
+            # Predicciones de modelos adicionales (para comparativa)
+            precios_modelos = {}
+            for _nm, _m in modelos_extra.items():
+                try:
+                    precios_modelos[_nm] = _m.predict(entrada)[0]
+                except Exception:
+                    pass
+
             # ── Analisis visual de desperfectos con CNN propio ───────────────
             resultado_vision = None
             desc_danos_pct   = 0
@@ -892,6 +923,22 @@ elif seccion == SECCIONES[1]:
             p_max  = precio_final * (1 + MAPE_FACTOR)
             pct_intervalo = round(MAPE_FACTOR * 100)
 
+            # Bloque HTML con precios de otros modelos
+            if precios_modelos:
+                _items = "  &nbsp;&nbsp;|&nbsp;&nbsp;  ".join(
+                    f"<b>{_nm}:</b>&nbsp;{_p * (1 - desc_danos_pct / 100):,.0f}&nbsp;&euro;"
+                    for _nm, _p in precios_modelos.items()
+                )
+                _bloque_otros_modelos = f"""
+                <div style="margin-top:14px;padding:10px 16px;background:#F8FAFC;
+                            border-radius:6px;border:1px solid #E2E8F0;">
+                    <div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.07em;
+                                color:#94A3B8;margin-bottom:6px;">Estimaciones por modelo</div>
+                    <div style="font-size:0.82rem;color:#374151;line-height:1.9;">{_items}</div>
+                </div>"""
+            else:
+                _bloque_otros_modelos = ""
+
             media_marca = df[df["marca"] == marca_sel]["precio_eur"].median()
             diff = precio_final - media_marca
             signo = "por encima" if diff > 0 else "por debajo"
@@ -940,13 +987,13 @@ elif seccion == SECCIONES[1]:
                     {_label_precio}
                 </p>
                 <div class="precio-principal">{precio_final:,.0f} €</div>
-                <div class="precio-rango">Intervalo de mercado: {p_min:,.0f} € — {p_max:,.0f} € &nbsp;<span style="font-size:0.8rem;color:#9CA3AF;">(±{pct_intervalo}%)</span></div>
-                <div class="confidence-badge"><span class="dot"></span> GBM · R² 0.941 · MAE del modelo ±{MAE_MODELO:,} €</div>
+                <div class="confidence-badge"><span class="dot"></span> GBM (Gradient Boosting) · R² 0.941 · Precio más ajustado</div>
                 <br><span class="{clase_diff}">{icono_diff} {abs(diff):,.0f} € {signo} de la mediana de {marca_sel}</span>
                 <br><span style="display:inline-block;margin-top:10px;background:{etq_bg};color:{etq_fg};
                     border-radius:6px;padding:4px 10px;font-size:0.82rem;font-weight:600;">
                     Etiqueta DGT: {etiqueta_sel.replace('_', ' ')}
                 </span>
+                {_bloque_otros_modelos}
             </div>
             """, unsafe_allow_html=True)
 
@@ -1058,6 +1105,10 @@ elif seccion == SECCIONES[1]:
             # ── Exportar PDF ───────────────────────────────────────────────────
             st.markdown("<br>", unsafe_allow_html=True)
             try:
+                _precios_mod_pdf = {
+                    nm: p * (1 - desc_danos_pct / 100)
+                    for nm, p in precios_modelos.items()
+                } if precios_modelos else None
                 pdf_bytes = _generar_pdf_tasacion(
                     marca=marca_sel, modelo=modelo_sel, año=año_sel,
                     km=km_sel, cv=cv_sel, combustible=combustible_sel,
@@ -1069,6 +1120,7 @@ elif seccion == SECCIONES[1]:
                     edades_rng=edades_rng, precios_edad=precios_edad, ant=ant,
                     km_rng=km_rng, precios_km_suave=precios_km_suave, km_sel=km_sel,
                     tabla_sim=tabla_sim if not similares.empty else None,
+                    precios_modelos=_precios_mod_pdf,
                 )
                 nombre_pdf = f"tasacion_{marca_sel}_{modelo_sel[:15].replace(' ','_')}_{año_sel}.pdf"
                 st.download_button(
