@@ -327,7 +327,9 @@ _COLOR_ETIQUETA = {
 
 @st.cache_data
 def cargar_datos():
-    ruta = os.path.join(RUTA_BASE, "..", "datos_scrapeados_autoscout.csv")
+    ruta = os.path.join(RUTA_BASE, "datos_scrapeados_autoscout.csv")
+    if not os.path.exists(ruta):
+        ruta = os.path.join(RUTA_BASE, "..", "datos_scrapeados_autoscout.csv")
     if not os.path.exists(ruta):
         return None
     df = pd.read_csv(ruta, encoding="utf-8-sig")
