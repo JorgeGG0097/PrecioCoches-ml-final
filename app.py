@@ -333,6 +333,7 @@ def cargar_datos():
     if not os.path.exists(ruta):
         return None
     df = pd.read_csv(ruta, encoding="utf-8-sig")
+    df = df.drop_duplicates()
     df["antiguedad"] = AÑO_ACTUAL - df["año"]
     df["km_por_año"] = (df["kilometraje_km"] / df["antiguedad"].clip(lower=1)).round(0).astype(int)
     return df
