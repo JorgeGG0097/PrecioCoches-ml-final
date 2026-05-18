@@ -15,32 +15,36 @@
     "tipo_venta"
   ],
   "año_actual": 2026,
-  "mae_test": 1732,
+  "mae_test": 2428,
+  "r2_test": 0.9,
+  "r2_crossval": 0.9262,
+  "r2_crossval_std": 0.0196,
+  "n_registros": 30477,
   "modelos": {
     "gbm": {
       "nombre": "GBM (Gradient Boosting)",
-      "r2": 0.9402,
-      "mae": 1732
+      "r2": 0.9,
+      "mae": 2428
     },
     "rf": {
       "nombre": "Random Forest",
-      "r2": 0.9225,
-      "mae": 2040
+      "r2": 0.9163,
+      "mae": 2611
     },
     "xgb": {
       "nombre": "XGBoost",
-      "r2": 0.93,
-      "mae": 1983
+      "r2": 0.9122,
+      "mae": 2473
     },
     "lgbm": {
       "nombre": "LightGBM",
-      "r2": 0.9328,
-      "mae": 1899
+      "r2": 0.9249,
+      "mae": 2537
     },
     "cat": {
       "nombre": "CatBoost",
-      "r2": 0.9234,
-      "mae": 2124
+      "r2": 0.9259,
+      "mae": 2703
     }
   }
 }

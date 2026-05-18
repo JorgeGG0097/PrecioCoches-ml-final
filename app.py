@@ -291,55 +291,48 @@ def cargar_modelo_cnn():
     except Exception:
         return None
 
-_MARCA_MAP = {"Alfa": "Alfa Romeo", "Mercedes": "Mercedes-Benz", "Land": "Land Rover"}
-
-def _normalizar_marca(m):
-    s = str(m)
-    if s.lower().startswith("citro"):
-        return "Citroen"
-    return _MARCA_MAP.get(s, s)
-
 def _norm_fuel(s):
     import unicodedata
     return unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode("ascii").lower().strip()
 
 def _derivar_etiqueta(combustible, año):
     c = _norm_fuel(combustible)
-    if "electric" in c:
-        return "0_EMISIONES"
-    if "brid" in c:
-        return "ECO"
-    if "gasolina" in c:
-        if año >= 2006: return "C"
-        if año >= 2001: return "B"
-        return "Sin etiqueta"
-    if "diesel" in c or "sel" in c:
-        if año >= 2015: return "C"
-        if año >= 2006: return "B"
-        return "Sin etiqueta"
-    return "ECO"
+    if "electr" in c:
+        return "0_emisiones"
+    if "enchufable" in c or "phev" in c or "plug" in c:
+        return "0_emisiones"
+    if "gas" in c:
+        return "eco"
+    if "hibrido" in c or "hybrid" in c or "mild" in c:
+        return "eco"
+    if "diesel" in c or "gasoil" in c or "gasoleo" in c or "sel" in c:
+        return "b" if año >= 2014 else ("c" if año >= 2006 else "sin_etiqueta")
+    return "b"
+
+_ETIQUETA_DISPLAY = {
+    "0_emisiones": "0 EMISIONES",
+    "eco":         "ECO",
+    "c":           "C",
+    "b":           "B",
+    "sin_etiqueta":"Sin etiqueta",
+}
 
 _COLOR_ETIQUETA = {
-    "0_EMISIONES": ("#065F46", "#D1FAE5"),
-    "ECO":         ("#0E7490", "#CFFAFE"),
-    "C":           ("#166534", "#DCFCE7"),
-    "B":           ("#92400E", "#FEF3C7"),
-    "Sin etiqueta":("#475569", "#F1F5F9"),
+    "0_emisiones": ("#065F46", "#D1FAE5"),
+    "eco":         ("#0E7490", "#CFFAFE"),
+    "c":           ("#166534", "#DCFCE7"),
+    "b":           ("#92400E", "#FEF3C7"),
+    "sin_etiqueta":("#475569", "#F1F5F9"),
 }
 
 @st.cache_data
 def cargar_datos():
-    ruta = os.path.join(RUTA_BASE, "Cars_combinado_limpio.csv")
+    ruta = os.path.join(RUTA_BASE, "..", "datos_scrapeados_autoscout.csv")
     if not os.path.exists(ruta):
         return None
     df = pd.read_csv(ruta, encoding="utf-8-sig")
-    df["marca"] = df["marca"].apply(_normalizar_marca)
     df["antiguedad"] = AÑO_ACTUAL - df["año"]
     df["km_por_año"] = (df["kilometraje_km"] / df["antiguedad"].clip(lower=1)).round(0).astype(int)
-    if "etiqueta_ambiental" not in df.columns:
-        df["etiqueta_ambiental"] = df.apply(
-            lambda r: _derivar_etiqueta(r["combustible"], r["año"]), axis=1
-        )
     return df
 
 @st.cache_data
@@ -363,8 +356,12 @@ if modelo_ml is None or df is None or categorias is None or rangos is None:
     st.error("Archivos del modelo no encontrados. Ejecuta primero **entrenar_modelo.py**.")
     st.stop()
 
-MAE_MODELO   = info_model["mae_test"] if info_model else 1772
-MAPE_FACTOR  = MAE_MODELO / df["precio_eur"].median()   # ≈ 0.108 → intervalo escala con el precio
+MAE_MODELO      = info_model["mae_test"] if info_model else 1772
+R2_GBM          = round(info_model["modelos"]["gbm"]["r2"], 3) if info_model else 0.94
+R2_CROSSVAL     = round(info_model.get("r2_crossval", R2_GBM), 3) if info_model else R2_GBM
+R2_CV_STD       = round(info_model.get("r2_crossval_std", 0.02), 3) if info_model else 0.02
+N_REGISTROS     = info_model.get("n_registros", len(df)) if info_model else len(df)
+MAPE_FACTOR     = MAE_MODELO / df["precio_eur"].median()
 
 
 # ── Secciones ──────────────────────────────────────────────────────────────────
@@ -450,7 +447,7 @@ def generar_explicacion(df_data, var_x, var_y, tipo_x):
 # ── Generador de PDF de tasación ──────────────────────────────────────────────
 def _generar_pdf_tasacion(
     marca, modelo, año, km, cv, combustible, transmision,
-    etiqueta, tipo_venta, precio, p_min, p_max, pct_intervalo,
+    etiqueta, precio, p_min, p_max, pct_intervalo,
     diff, signo, mae,
     edades_rng, precios_edad, ant,
     km_rng, precios_km_suave, km_sel,
@@ -547,8 +544,7 @@ def _generar_pdf_tasacion(
         ("Potencia", f"{cv} CV"),
         ("Combustible", combustible),
         ("Transmision", transmision),
-        ("Tipo de venta", tipo_venta),
-        ("Etiqueta DGT", etiqueta.replace("_", " ")),
+        ("Etiqueta DGT", _ETIQUETA_DISPLAY.get(etiqueta, etiqueta.replace("_", " ").upper())),
     ]
     col_w = 95
     for i, (k, v) in enumerate(datos):
@@ -604,7 +600,7 @@ def _generar_pdf_tasacion(
     pdf.set_font("Helvetica", "", 8.5)
     pdf.set_text_color(*GRIS_PDF)
     pdf.cell(190, 5,
-        f"Algoritmo GBM (HistGradientBoosting)  |  R2 = 0.941  |  MAE = +/-{mae:,} EUR  |  Entrenado con 80.528 anuncios",
+        f"Algoritmo GBM (HistGradientBoosting)  |  R2 CV = {R2_CROSSVAL:.3f}  |  MAE = +/-{mae:,} EUR  |  Entrenado con {N_REGISTROS:,} anuncios (Autoscout24)",
         align="C", ln=True)
     pdf.set_text_color(*NEGRO)
 
@@ -633,8 +629,8 @@ def _generar_pdf_tasacion(
                     str(row.get("Km", row.get("kilometraje_km",""))),
                     str(row.get("CV", row.get("potencia_cv",""))),
                     str(row.get("Combustible", row.get("combustible",""))),
-                    str(row.get("Precio real", row.get("precio_eur",""))),
-                    str(row.get("vs. estimado",""))]
+                    str(row.get("Precio real", row.get("precio_eur",""))).replace("€", "EUR"),
+                    str(row.get("vs. estimado","")).replace("€", "EUR")]
             for v, w in zip(vals, col_ws):
                 pdf.cell(w, 5.5, v[:20], border=1, fill=True)
             pdf.ln(); fill = not fill
@@ -642,7 +638,7 @@ def _generar_pdf_tasacion(
         pdf.set_font("Helvetica", "I", 7)
         pdf.set_text_color(*GRIS_PDF)
         pdf.ln(1)
-        pdf.cell(0, 4, f"Fuente: dataset de 80.528 anuncios del mercado espanol de segunda mano.", ln=True)
+        pdf.cell(0, 4, f"Fuente: dataset de {N_REGISTROS:,} anuncios de Autoscout24 (mercado espanol de segunda mano).", ln=True)
         pdf.set_text_color(*NEGRO)
 
     pie()
@@ -689,7 +685,7 @@ def _generar_pdf_tasacion(
 # SECCIÓN 0 — PORTADA
 # ══════════════════════════════════════════════════════════════════════════════
 if seccion == SECCIONES[0]:
-    st.markdown("""
+    st.markdown(f"""
     <div style="margin-bottom:28px;">
         <div style="display:inline-block;background:#EFF6FF;color:#1d4ed8;border-radius:20px;
                     padding:4px 14px;font-size:0.78rem;font-weight:600;margin-bottom:12px;">
@@ -698,24 +694,24 @@ if seccion == SECCIONES[0]:
         <h1 style="font-size:2.2rem;font-weight:800;color:#111827;margin:0 0 8px 0;">🚗 PrecioCoches ML</h1>
         <p style="font-size:1rem;color:#6B7280;max-width:620px;margin:0;">
             Plataforma de análisis del mercado de vehículos de segunda mano en España,
-            impulsada por Gradient Boosting Machine entrenado sobre más de 80.000 anuncios reales.
+            impulsada por Gradient Boosting Machine entrenado sobre {N_REGISTROS:,} anuncios reales de Autoscout24.
         </p>
     </div>
     """, unsafe_allow_html=True)
 
     s1, s2, s3, s4 = st.columns(4, gap="small")
     for col, val, lbl, desc, color in [
-        (s1, "80.528",
+        (s1, f"{N_REGISTROS:,}".replace(",", "."),
              "Vehículos en dataset",
-             "Anuncios reales del mercado español usados para entrenar el modelo.",
+             "Anuncios reales scrapeados de Autoscout24 usados para entrenar el modelo.",
              "#0070f3"),
-        (s2, "0.941",
-             "R² del modelo GBM",
-             "Precisión global: 1.0 sería perfección absoluta. 0.941 indica que el modelo explica el 94% de la variación de precios.",
+        (s2, f"{R2_CROSSVAL:.3f}",
+             "R² validación cruzada",
+             f"R² en validación cruzada 5-fold: {R2_CROSSVAL:.3f} ± {R2_CV_STD:.3f}. El modelo explica el {R2_CROSSVAL*100:.0f}% de la variación de precios (R² test independiente: {R2_GBM:.3f}).",
              "#00d084"),
         (s3, f"±{MAE_MODELO:,} €",
              "Error medio (MAE)",
-             "En promedio, la estimación se desvía ±1.732 € del precio real del anuncio.",
+             f"En promedio, la estimación se desvía ±{MAE_MODELO:,} € del precio real del anuncio.",
              "#ff9500"),
         (s4, "4",
              "Herramientas de análisis",
@@ -784,10 +780,10 @@ if seccion == SECCIONES[0]:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(f"""
     <div class="insight">
-        💡 <b>Sobre el modelo:</b> Se ha entrenado un Gradient Boosting Machine (GBM) sobre 80.528 anuncios
-        reales del mercado español de segunda mano. Las variables más relevantes son el año de fabricación,
-        el kilometraje y la potencia. El modelo alcanza un R² de 0.941 con un error medio absoluto de
-        ±{MAE_MODELO:,} €.
+        💡 <b>Sobre el modelo:</b> Se ha entrenado un Gradient Boosting Machine (GBM) sobre {N_REGISTROS:,} anuncios
+        reales scrapeados de Autoscout24 (mercado español de segunda mano). Las variables más relevantes son
+        el año de fabricación, el kilometraje y la potencia. El modelo alcanza un R² de {R2_CROSSVAL:.3f}
+        (validación cruzada 5-fold ± {R2_CV_STD:.3f}) con un error medio absoluto de ±{MAE_MODELO:,} €.
     </div>
     """, unsafe_allow_html=True)
 
@@ -796,7 +792,7 @@ if seccion == SECCIONES[0]:
 # SECCIÓN 1 — TASADOR
 # ══════════════════════════════════════════════════════════════════════════════
 elif seccion == SECCIONES[1]:
-    st.markdown('<p class="page-title">🔍 Tasador de precio</p><p class="page-subtitle">Introduce las características del vehículo y obtén una estimación basada en 80.000 anuncios reales.</p>', unsafe_allow_html=True)
+    st.markdown(f'<p class="page-title">🔍 Tasador de precio</p><p class="page-subtitle">Introduce las características del vehículo y obtén una estimación basada en {N_REGISTROS:,} anuncios reales de Autoscout24.</p>', unsafe_allow_html=True)
 
     col_form, col_result = st.columns([1, 1], gap="large")
 
@@ -826,7 +822,6 @@ elif seccion == SECCIONES[1]:
             combustible_sel = st.selectbox("Combustible", sorted(df["combustible"].unique()))
 
         transmision_sel = st.selectbox("Transmisión", sorted(df["transmision"].unique()))
-        tipo_venta_sel  = st.selectbox("Tipo de venta", ["Usado", "Km 0", "Casi nuevo", "Demo"])
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("#### Fotos del vehiculo *(opcional)*")
@@ -855,13 +850,13 @@ elif seccion == SECCIONES[1]:
                 "marca": marca_sel, "modelo": modelo_sel,
                 "combustible": combustible_sel, "transmision": transmision_sel,
                 "etiqueta_ambiental": etiqueta_sel,
-                "tipo_venta": tipo_venta_sel,
+                "tipo_venta": "Usado",
             }])
 
             precio = modelo_ml.predict(entrada)[0]
 
-            # Predicciones de modelos adicionales (para comparativa)
-            precios_modelos = {}
+            # Predicciones de todos los modelos (GBM + adicionales)
+            precios_modelos = {"GBM": precio}
             for _nm, _m in modelos_extra.items():
                 try:
                     precios_modelos[_nm] = _m.predict(entrada)[0]
@@ -923,18 +918,27 @@ elif seccion == SECCIONES[1]:
             p_max  = precio_final * (1 + MAPE_FACTOR)
             pct_intervalo = round(MAPE_FACTOR * 100)
 
-            # Bloque HTML con precios de otros modelos
+            # Bloque HTML con comparativa de todos los modelos
             if precios_modelos:
-                _items = "  &nbsp;&nbsp;|&nbsp;&nbsp;  ".join(
-                    f"<b>{_nm}:</b>&nbsp;{_p * (1 - desc_danos_pct / 100):,.0f}&nbsp;&euro;"
-                    for _nm, _p in precios_modelos.items()
-                )
+                _items_html = ""
+                for _nm, _p in precios_modelos.items():
+                    _p_adj = _p * (1 - desc_danos_pct / 100)
+                    _is_main = (_nm == "GBM")
+                    _weight = "700" if _is_main else "400"
+                    _color  = "#0070f3" if _is_main else "#374151"
+                    _items_html += (
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'padding:5px 0;border-bottom:1px solid #F1F5F9;">'
+                        f'<span style="font-size:0.82rem;color:{_color};font-weight:{_weight};">{_nm}</span>'
+                        f'<span style="font-size:0.82rem;color:{_color};font-weight:{_weight};">{_p_adj:,.0f} €</span>'
+                        f'</div>'
+                    )
                 _bloque_otros_modelos = f"""
                 <div style="margin-top:14px;padding:10px 16px;background:#F8FAFC;
                             border-radius:6px;border:1px solid #E2E8F0;">
                     <div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:.07em;
-                                color:#94A3B8;margin-bottom:6px;">Estimaciones por modelo</div>
-                    <div style="font-size:0.82rem;color:#374151;line-height:1.9;">{_items}</div>
+                                color:#94A3B8;margin-bottom:8px;">Comparativa de modelos</div>
+                    {_items_html}
                 </div>"""
             else:
                 _bloque_otros_modelos = ""
@@ -987,43 +991,80 @@ elif seccion == SECCIONES[1]:
                     {_label_precio}
                 </p>
                 <div class="precio-principal">{precio_final:,.0f} €</div>
-                <div class="confidence-badge"><span class="dot"></span> GBM (Gradient Boosting) · R² 0.941 · Precio más ajustado</div>
+                <div class="precio-rango">Intervalo ±{pct_intervalo}%: {p_min:,.0f} € – {p_max:,.0f} €</div>
+                <div style="font-size:0.75rem;color:#9CA3AF;margin-top:4px;line-height:1.4;">
+                    El ±{pct_intervalo}% se obtiene del error medio del modelo (MAE = {MAE_MODELO:,} €)
+                    dividido entre el precio mediano del dataset ({int(df['precio_eur'].median()):,} €).
+                    Dos vehículos idénticos en papel pueden diferir en precio según estado, historial y negociación.
+                </div>
+                <div class="confidence-badge"><span class="dot"></span> GBM (Gradient Boosting) · R² {R2_CROSSVAL:.3f} (CV) / {R2_GBM:.3f} (test) · MAE ±{MAE_MODELO:,} €</div>
                 <br><span class="{clase_diff}">{icono_diff} {abs(diff):,.0f} € {signo} de la mediana de {marca_sel}</span>
                 <br><span style="display:inline-block;margin-top:10px;background:{etq_bg};color:{etq_fg};
                     border-radius:6px;padding:4px 10px;font-size:0.82rem;font-weight:600;">
-                    Etiqueta DGT: {etiqueta_sel.replace('_', ' ')}
+                    Etiqueta DGT: {_ETIQUETA_DISPLAY.get(etiqueta_sel, etiqueta_sel.replace('_', ' ').upper())}
                 </span>
-                {_bloque_otros_modelos}
             </div>
             """, unsafe_allow_html=True)
+
+            if _bloque_otros_modelos:
+                st.markdown(_bloque_otros_modelos, unsafe_allow_html=True)
 
             if _bloque_danos:
                 st.markdown(_bloque_danos, unsafe_allow_html=True)
 
+            # ── Paleta y conjunto de todos los modelos ─────────────────────────
+            _COLORES_MOD = {
+                "GBM":           AZUL,      # #0070f3
+                "Random Forest": NARANJA,   # #f59e0b
+                "XGBoost":       VERDE,     # #00c072
+                "LightGBM":      "#7928ca",
+                "CatBoost":      ROJO,      # #DC2626
+            }
+            _todos_modelos = {"GBM": modelo_ml, **modelos_extra}
+
             # ── Curva depreciación ─────────────────────────────────────────────
-            st.markdown("**Depreciación según la antigüedad**")
-            edades_rng   = list(range(0, 19))
-            precios_edad = []
-            for edad in edades_rng:
-                e = entrada.copy()
-                e["año"]        = AÑO_ACTUAL - edad
-                e["antiguedad"] = edad
-                e["km_por_año"] = int(km_sel // max(edad, 1))
-                precios_edad.append(modelo_ml.predict(e)[0])
+            st.markdown("**Depreciación según la antigüedad — comparativa de modelos**")
+            edades_rng = list(range(0, 19))
+            _edad_preds: dict = {}
+            for _nm_c, _m_c in _todos_modelos.items():
+                _curva = []
+                for edad in edades_rng:
+                    e = entrada.copy()
+                    e["año"]        = AÑO_ACTUAL - edad
+                    e["antiguedad"] = edad
+                    e["km_por_año"] = int(km_sel // max(edad, 1))
+                    try:
+                        _curva.append(_m_c.predict(e)[0])
+                    except Exception:
+                        _curva.append(None)
+                _edad_preds[_nm_c] = _curva
+            precios_edad = _edad_preds["GBM"]  # GBM usado en PDF
 
             fig1 = go.Figure()
+            # Banda de confianza GBM
             fig1.add_trace(go.Scatter(
                 x=edades_rng + edades_rng[::-1],
-                y=[p * (1 + MAPE_FACTOR) for p in precios_edad] + [p * (1 - MAPE_FACTOR) for p in precios_edad][::-1],
-                fill="toself", fillcolor="rgba(0,112,243,0.1)",
-                line=dict(color="rgba(0,0,0,0)"), name="Intervalo estimado",
+                y=[p * (1 + MAPE_FACTOR) for p in precios_edad] +
+                  [p * (1 - MAPE_FACTOR) for p in precios_edad][::-1],
+                fill="toself", fillcolor="rgba(0,112,243,0.08)",
+                line=dict(color="rgba(0,0,0,0)"),
+                name="Intervalo GBM (±14%)", showlegend=True,
             ))
-            fig1.add_trace(go.Scatter(
-                x=edades_rng, y=precios_edad,
-                mode="lines", line=dict(color=AZUL, width=2.5),
-                name="Precio estimado",
-                hovertemplate="<b>%{x} años</b><br>%{y:,.0f} €<extra></extra>",
-            ))
+            # Traza de cada modelo
+            for _nm_c, _curva in _edad_preds.items():
+                _es_gbm = _nm_c == "GBM"
+                _c = _COLORES_MOD.get(_nm_c, "#888")
+                fig1.add_trace(go.Scatter(
+                    x=edades_rng, y=_curva,
+                    mode="lines",
+                    name=_nm_c,
+                    line=dict(color=_c, width=2.8 if _es_gbm else 1.5,
+                              dash="solid" if _es_gbm else "dot"),
+                    hovertemplate=(
+                        f"<b>{_nm_c}</b><br>"
+                        "%{x} años — <b>%{y:,.0f} €</b><extra></extra>"
+                    ),
+                ))
             fig1.add_vline(x=ant, line_dash="dash", line_color=VERDE, line_width=1.5,
                            annotation_text=f"Tu vehículo ({ant} años)",
                            annotation_font_color=VERDE, annotation_font_size=11)
@@ -1031,29 +1072,53 @@ elif seccion == SECCIONES[1]:
             fmt_eur_axis(fig1, "y")
             fig1.update_xaxes(title_text="Antigüedad (años)")
             fig1.update_yaxes(title_text="Precio estimado (€)")
+            fig1.update_layout(
+                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            xanchor="left", x=0, font=dict(size=11)),
+            )
             st.plotly_chart(fig1, use_container_width=True)
+            st.caption(
+                f"Línea continua azul: GBM (modelo principal) · R²={R2_CROSSVAL:.3f} (CV) · MAE ±{MAE_MODELO:,} €. "
+                "Líneas punteadas: modelos alternativos evaluados. "
+                "La banda sombreada es el intervalo de confianza ±14% del GBM. "
+                "La convergencia entre curvas indica alta consistencia en la predicción del efecto de la antigüedad."
+            )
 
             # ── Curva impacto kilómetros ───────────────────────────────────────
-            st.markdown("**Impacto del kilometraje en el precio**")
-            km_rng    = list(range(0, 300_001, 3_000))
-            precios_km = []
-            for k in km_rng:
-                e = entrada.copy()
-                e["kilometraje_km"] = k
-                e["km_por_año"]     = int(k // max(ant, 1))
-                precios_km.append(modelo_ml.predict(e)[0])
+            st.markdown("**Impacto del kilometraje en el precio — comparativa de modelos**")
+            km_rng = list(range(0, 300_001, 3_000))
+            _km_preds: dict = {}
+            for _nm_c, _m_c in _todos_modelos.items():
+                _curva_km = []
+                for k in km_rng:
+                    e = entrada.copy()
+                    e["kilometraje_km"] = k
+                    e["km_por_año"]     = int(k // max(ant, 1))
+                    try:
+                        _curva_km.append(_m_c.predict(e)[0])
+                    except Exception:
+                        _curva_km.append(None)
+                _km_preds[_nm_c] = (
+                    pd.Series(_curva_km)
+                    .rolling(window=7, center=True, min_periods=1).mean().tolist()
+                )
+            precios_km_suave = _km_preds["GBM"]  # GBM usado en PDF
 
-            precios_km_suave = (
-                pd.Series(precios_km)
-                .rolling(window=7, center=True, min_periods=1).mean().tolist()
-            )
             fig2 = go.Figure()
-            fig2.add_trace(go.Scatter(
-                x=[k / 1000 for k in km_rng], y=precios_km_suave,
-                mode="lines", line=dict(color=NARANJA, width=2.5),
-                name="Precio estimado",
-                hovertemplate="<b>%{x:.0f}k km</b><br>%{y:,.0f} €<extra></extra>",
-            ))
+            for _nm_c, _curva_km in _km_preds.items():
+                _es_gbm = _nm_c == "GBM"
+                _c = _COLORES_MOD.get(_nm_c, "#888")
+                fig2.add_trace(go.Scatter(
+                    x=[k / 1000 for k in km_rng], y=_curva_km,
+                    mode="lines",
+                    name=_nm_c,
+                    line=dict(color=_c, width=2.8 if _es_gbm else 1.5,
+                              dash="solid" if _es_gbm else "dot"),
+                    hovertemplate=(
+                        f"<b>{_nm_c}</b><br>"
+                        "%{x:.0f}k km — <b>%{y:,.0f} €</b><extra></extra>"
+                    ),
+                ))
             fig2.add_vline(x=km_sel / 1000, line_dash="dash", line_color=VERDE, line_width=1.5,
                            annotation_text=f"{km_sel:,} km",
                            annotation_font_color=VERDE, annotation_font_size=11)
@@ -1061,46 +1126,52 @@ elif seccion == SECCIONES[1]:
             fmt_eur_axis(fig2, "y")
             fig2.update_xaxes(title_text="Kilometraje (miles de km)")
             fig2.update_yaxes(title_text="Precio estimado (€)")
+            fig2.update_layout(
+                legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                            xanchor="left", x=0, font=dict(size=11)),
+            )
             st.plotly_chart(fig2, use_container_width=True)
+            st.caption(
+                "Cada curva muestra cómo predice el modelo correspondiente el efecto del kilometraje sobre el precio "
+                "(suavizado con media móvil de 7 puntos). "
+                "La coincidencia entre curvas indica alta consistencia; las divergencias en rangos extremos "
+                "reflejan diferencias en cómo cada modelo extrapola fuera de la densidad de datos."
+            )
 
             # ── Coches similares en el dataset ────────────────────────────────
             st.markdown("**Coches similares en el dataset**")
             mask_sim = (
                 (df["marca"] == marca_sel) &
                 (df["año"].between(año_sel - 2, año_sel + 2)) &
-                (df["kilometraje_km"].between(max(0, km_sel - 50_000), km_sel + 50_000)) &
-                (df["tipo_venta"] == tipo_venta_sel)
+                (df["kilometraje_km"].between(max(0, km_sel - 50_000), km_sel + 50_000))
             )
             similares = df[mask_sim].copy()
-            aviso_tipo = ""
-            if similares.empty:
-                # Si no hay del mismo tipo, ampliar sin filtro de tipo_venta
-                mask_sim = (
-                    (df["marca"] == marca_sel) &
-                    (df["año"].between(año_sel - 2, año_sel + 2)) &
-                    (df["kilometraje_km"].between(max(0, km_sel - 50_000), km_sel + 50_000))
-                )
-                similares = df[mask_sim].copy()
-                aviso_tipo = f" (sin coincidencias de tipo '{tipo_venta_sel}', mostrando todos los tipos)"
             if similares.empty:
                 st.caption("No se encontraron anuncios con características similares en el dataset.")
+                tabla_sim = None
             else:
-                similares = similares.sort_values(
-                    by="precio_eur",
-                    key=lambda s: (s - precio).abs()
-                ).head(8)
+                similares = (
+                    similares
+                    .drop_duplicates(subset=["año", "kilometraje_km", "potencia_cv",
+                                             "combustible", "transmision", "precio_eur"])
+                    .sort_values(by="precio_eur", key=lambda s: (s - precio).abs())
+                    .head(8)
+                )
                 similares["vs. estimado"] = (similares["precio_eur"] - precio).apply(
                     lambda x: f"+{x:,.0f} €" if x >= 0 else f"{x:,.0f} €"
                 )
                 cols_tabla = ["año", "kilometraje_km", "potencia_cv",
-                              "combustible", "transmision", "tipo_venta", "precio_eur", "vs. estimado"]
+                              "combustible", "transmision", "precio_eur", "vs. estimado"]
                 tabla_sim = similares[cols_tabla].copy()
                 tabla_sim["precio_eur"]     = tabla_sim["precio_eur"].apply(lambda x: f"{x:,.0f} €")
                 tabla_sim["kilometraje_km"] = tabla_sim["kilometraje_km"].apply(lambda x: f"{x:,.0f} km")
                 tabla_sim["potencia_cv"]    = tabla_sim["potencia_cv"].apply(lambda x: f"{int(x)} CV")
-                tabla_sim.columns = ["Año", "Km", "CV", "Combustible", "Transmisión", "Tipo venta", "Precio real", "vs. estimado"]
+                tabla_sim = tabla_sim.fillna("—")
+                tabla_sim.columns = ["Año", "Km", "CV", "Combustible", "Transmisión",
+                                     "Precio real", "vs. estimado"]
                 st.dataframe(tabla_sim.reset_index(drop=True), use_container_width=True, hide_index=True)
-                st.caption(f"{len(mask_sim[mask_sim])} anuncios de {marca_sel} con ±2 años y ±50.000 km encontrados{aviso_tipo}.")
+                n_encontrados = similares.shape[0]
+                st.caption(f"{n_encontrados} anuncio{'s' if n_encontrados != 1 else ''} de {marca_sel} con ±2 años y ±50.000 km encontrado{'s' if n_encontrados != 1 else ''}.")
 
             # ── Exportar PDF ───────────────────────────────────────────────────
             st.markdown("<br>", unsafe_allow_html=True)
@@ -1113,13 +1184,12 @@ elif seccion == SECCIONES[1]:
                     marca=marca_sel, modelo=modelo_sel, año=año_sel,
                     km=km_sel, cv=cv_sel, combustible=combustible_sel,
                     transmision=transmision_sel, etiqueta=etiqueta_sel,
-                    tipo_venta=tipo_venta_sel,
                     precio=precio_final, p_min=p_min, p_max=p_max,
                     pct_intervalo=pct_intervalo,
                     diff=diff, signo=signo, mae=MAE_MODELO,
                     edades_rng=edades_rng, precios_edad=precios_edad, ant=ant,
                     km_rng=km_rng, precios_km_suave=precios_km_suave, km_sel=km_sel,
-                    tabla_sim=tabla_sim if not similares.empty else None,
+                    tabla_sim=tabla_sim,
                     precios_modelos=_precios_mod_pdf,
                 )
                 nombre_pdf = f"tasacion_{marca_sel}_{modelo_sel[:15].replace(' ','_')}_{año_sel}.pdf"
@@ -1243,13 +1313,10 @@ elif seccion == SECCIONES[2]:
                 # Marcas más frecuentes
                 st.markdown("#### Marcas más frecuentes en tu presupuesto")
                 top_marcas = filtrado["marca"].value_counts().head(12).reset_index()
-                top_marcas.columns = ["Marca", "Anuncios"]
-                fig = px.bar(top_marcas.sort_values("Anuncios"), x="Anuncios", y="Marca",
-                             orientation="h", color_discrete_sequence=[AZUL_L])
-                fig.update_traces(hovertemplate="<b>%{y}</b><br>%{x:,} vehículos<extra></extra>")
-                estilo_fig(fig, height=380)
-                fig.update_layout(title=f"Oferta entre {p_min_u:,} € y {p_max_u:,} €")
-                st.plotly_chart(fig, use_container_width=True)
+                top_marcas.columns = ["Marca", "Vehículos"]
+                top_marcas.insert(0, "#", range(1, len(top_marcas) + 1))
+                top_marcas["Vehículos"] = top_marcas["Vehículos"].apply(lambda x: f"{x:,}")
+                st.dataframe(top_marcas, use_container_width=True, hide_index=True)
 
                 # Configuraciones típicas
                 st.markdown("#### Configuraciones más habituales")
@@ -1272,24 +1339,49 @@ elif seccion == SECCIONES[2]:
                                    "Precio mediano","Año típico","Km típicos","CV típicos"]
                 st.dataframe(config, use_container_width=True, hide_index=True)
 
-                # ── Link a Coches.net ──────────────────────────────────────────
+                # ── Links a portales de segunda mano ──────────────────────────
                 st.divider()
-                st.markdown("#### Buscar en Coches.net")
+                st.markdown("#### Buscar en portales de segunda mano")
                 st.caption(
-                    f"Abre la búsqueda con tu rango de precio ({p_min_u:,} € – {p_max_u:,} €) "
-                    f"y kilometraje ({km_min_f:,} – {km_max_f:,} km) ya aplicados. "
-                    f"Una vez en la web, escribe la marca en el buscador y te saldrán las opciones disponibles."
+                    f"Todos los portales se abren con tu rango de precio "
+                    f"({p_min_u:,} € – {p_max_u:,} €) y kilometraje "
+                    f"({km_min_f:,} – {km_max_f:,} km) ya aplicados."
                 )
                 url_coches = (
                     f"https://www.coches.net/segunda-mano/"
                     f"?MinPrice={p_min_u}&MaxPrice={p_max_u}"
                     f"&MinKms={km_min_f}&MaxKms={km_max_f}"
                 )
-                st.link_button(
-                    "🔗 Ver coches en Coches.net",
-                    url_coches,
-                    use_container_width=True,
+                url_autoscout = (
+                    f"https://www.autoscout24.es/lst?"
+                    f"pricefrom={p_min_u}&priceto={p_max_u}"
+                    f"&kmfrom={km_min_f}&kmto={km_max_f}"
+                    f"&ustate=used"
                 )
+                url_wallapop = (
+                    f"https://es.wallapop.com/app/search?"
+                    f"category_ids=100&object_type_ids=167"
+                    f"&min_sale_price={p_min_u}&max_sale_price={p_max_u}"
+                )
+                url_milanuncios = (
+                    f"https://www.milanuncios.com/coches-de-segunda-mano/"
+                    f"?precio-min={p_min_u}&precio-max={p_max_u}"
+                    f"&kms-max={km_max_f}"
+                )
+                url_autocasion = (
+                    f"https://www.autocasion.com/coches-segunda-mano"
+                    f"?precioDesde={p_min_u}&precioHasta={p_max_u}"
+                    f"&kmHasta={km_max_f}"
+                )
+
+                col_p1, col_p2 = st.columns(2)
+                with col_p1:
+                    st.link_button("🔗 Coches.net", url_coches, use_container_width=True)
+                    st.link_button("🔗 Wallapop", url_wallapop, use_container_width=True)
+                    st.link_button("🔗 Autocasión", url_autocasion, use_container_width=True)
+                with col_p2:
+                    st.link_button("🔗 Autoscout24", url_autoscout, use_container_width=True)
+                    st.link_button("🔗 Milanuncios", url_milanuncios, use_container_width=True)
 
         else:
             st.markdown("""
@@ -1311,7 +1403,7 @@ elif seccion == SECCIONES[3]:
     marcas_sel = st.multiselect(
         "Selecciona marcas para comparar (máximo 6)",
         sorted(df["marca"].unique()),
-        default=["Volkswagen", "Seat", "Renault", "Bmw"],
+        default=["Volkswagen", "Seat", "Renault", "BMW"],
     )
     if len(marcas_sel) > 6:
         st.warning("Selecciona como máximo 6 marcas.")

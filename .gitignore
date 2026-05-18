@@ -10,3 +10,8 @@ prajwalbhamere/
 modelo_cnn.pt
 etiquetas.csv
 etiquetar_fotos.py
+scraper_autoscout24.py
+Cars_autoscout24.csv
+datos_scrapeados_autoscout.csv
+_debug_*.html
+catboost_info/

@@ -18,26 +18,13 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics import mean_absolute_error, r2_score
 
 RUTA_SCRIPT  = os.path.dirname(os.path.abspath(__file__))
-RUTA_DATOS   = os.path.join(RUTA_SCRIPT, "..", "Cars_combinado_limpio.csv")
+RUTA_DATOS   = os.path.join(RUTA_SCRIPT, "..", "datos_scrapeados_autoscout.csv")
 AÑO_ACTUAL   = 2026
 RANDOM_STATE = 42
-
-_MARCA_MAP = {
-    "Alfa":     "Alfa Romeo",
-    "Mercedes": "Mercedes-Benz",
-    "Land":     "Land Rover",
-}
-
-def _normalizar_marca(m):
-    s = str(m)
-    if s.lower().startswith("citro"):
-        return "Citroen"
-    return _MARCA_MAP.get(s, s)
 
 # ── Carga ─────────────────────────────────────────────────────────────────────
 print("Cargando datos...")
 df = pd.read_csv(RUTA_DATOS, encoding="utf-8-sig")
-df["marca"] = df["marca"].apply(_normalizar_marca)
 df["antiguedad"] = AÑO_ACTUAL - df["año"]
 df["km_por_año"] = (df["kilometraje_km"] / df["antiguedad"].clip(lower=1)).round(0).astype(int)
 print(f"  {len(df):,} registros cargados")
@@ -97,7 +84,9 @@ print(f"  MAE test : {mae_test:,.0f} EUR")
 
 print("\n  Cross-validation 5-fold...")
 cv = cross_val_score(modelo, X_train, y_train, cv=5, scoring="r2", n_jobs=-1)
-print(f"  R2 medio : {cv.mean():.4f} (+/- {cv.std():.4f})")
+r2_cv_mean = cv.mean()
+r2_cv_std  = cv.std()
+print(f"  R2 medio : {r2_cv_mean:.4f} (+/- {r2_cv_std:.4f})")
 
 # ── Guardar artefactos en la carpeta definitivo/ ──────────────────────────────
 print("\nGuardando artefactos...")
@@ -124,6 +113,8 @@ with open(os.path.join(RUTA_SCRIPT, "features_info.json"), "w", encoding="utf-8"
                "variables_categoricas": variables_categoricas,
                "año_actual": AÑO_ACTUAL,
                "mae_test": int(mae_test),
+               "r2_test": round(r2_test, 4),
+               "n_registros": len(df),
                "modelos": modelos_metricas}, f, ensure_ascii=False, indent=2)
 
 print("Artefactos guardados en la carpeta definitivo/")
@@ -186,6 +177,10 @@ with open(os.path.join(RUTA_SCRIPT, "features_info.json"), "w", encoding="utf-8"
                "variables_categoricas": variables_categoricas,
                "año_actual": AÑO_ACTUAL,
                "mae_test": int(mae_test),
+               "r2_test": round(r2_test, 4),
+               "r2_crossval": round(r2_cv_mean, 4),
+               "r2_crossval_std": round(r2_cv_std, 4),
+               "n_registros": len(df),
                "modelos": modelos_metricas}, f, ensure_ascii=False, indent=2)
 
 print("\nTodos los modelos guardados.")
