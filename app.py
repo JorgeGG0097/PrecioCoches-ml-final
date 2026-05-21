@@ -301,13 +301,16 @@ def _derivar_etiqueta(combustible, año):
         return "0_emisiones"
     if "enchufable" in c or "phev" in c or "plug" in c:
         return "0_emisiones"
-    if "gas" in c:
-        return "eco"
     if "hibrido" in c or "hybrid" in c or "mild" in c:
         return "eco"
-    if "diesel" in c or "gasoil" in c or "gasoleo" in c or "sel" in c:
-        return "b" if año >= 2014 else ("c" if año >= 2006 else "sin_etiqueta")
-    return "b"
+    # gasolina antes que gas para evitar falso positivo ("gas" IN "gasolina")
+    if "gasolina" in c or "gasoline" in c or "benzin" in c or "petrol" in c:
+        # C: Euro 4+ desde ene 2006; B: Euro 3 (2001-2005); sin etiqueta: pre-2001
+        return "c" if año >= 2006 else ("b" if año >= 2001 else "sin_etiqueta")
+    if "diesel" in c or "gasoil" in c or "gasoleo" in c:
+        # C: Euro 6 desde sep 2015; B: Euro 4/5 (2006-ago 2015); sin etiqueta: pre-2006
+        return "c" if año >= 2015 else ("b" if año >= 2006 else "sin_etiqueta")
+    return "eco"  # Gas/GLP/GNC y Otros
 
 _ETIQUETA_DISPLAY = {
     "0_emisiones": "0 EMISIONES",

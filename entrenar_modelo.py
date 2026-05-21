@@ -31,6 +31,24 @@ print(f"  {len(df):,} registros cargados")
 marcas_unicas = sorted(df["marca"].unique())
 print(f"  {len(marcas_unicas)} marcas unicas tras normalizar: {marcas_unicas}")
 
+# Re-derivar etiqueta_ambiental con logica DGT correcta (corrige bugs del scraper)
+def _derivar_etiqueta(combustible, año):
+    c = str(combustible).lower().strip()
+    if "electr" in c:
+        return "0_emisiones"
+    if "enchufable" in c or "phev" in c or "plug" in c:
+        return "0_emisiones"
+    if "hibrido" in c or "hybrid" in c or "mild" in c:
+        return "eco"
+    if "gasolina" in c or "gasoline" in c or "benzin" in c or "petrol" in c:
+        return "c" if año >= 2006 else ("b" if año >= 2001 else "sin_etiqueta")
+    if "diesel" in c or "gasoil" in c or "gasoleo" in c:
+        return "c" if año >= 2015 else ("b" if año >= 2006 else "sin_etiqueta")
+    return "eco"
+
+df["etiqueta_ambiental"] = df.apply(lambda r: _derivar_etiqueta(r["combustible"], r["año"]), axis=1)
+print("  Etiquetas re-derivadas:", df["etiqueta_ambiental"].value_counts().to_dict())
+
 variables_numericas   = ["año", "potencia_cv", "kilometraje_km", "antiguedad", "km_por_año"]
 variables_categoricas = ["marca", "modelo", "combustible", "transmision", "etiqueta_ambiental", "tipo_venta"]
 
