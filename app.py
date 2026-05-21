@@ -254,7 +254,7 @@ footer { visibility: hidden; }
 # ── Cache ──────────────────────────────────────────────────────────────────────
 @st.cache_resource
 def cargar_modelo():
-    ruta = os.path.join(RUTA_BASE, "modelo_gbm.pkl")
+    ruta = os.path.join(RUTA_BASE, "modelo_lgbm.pkl")
     return joblib.load(ruta) if os.path.exists(ruta) else None
 
 _CLASES_CNN      = ['sin_danos', 'leve', 'moderado', 'severo']
@@ -266,7 +266,7 @@ def cargar_todos_modelos():
     claves = [
         ("rf",   "Random Forest"),
         ("xgb",  "XGBoost"),
-        ("lgbm", "LightGBM"),
+        ("gbm",  "GBM"),
         ("cat",  "CatBoost"),
     ]
     resultado = {}
@@ -362,9 +362,9 @@ if modelo_ml is None or df is None or categorias is None or rangos is None:
     st.error("Archivos del modelo no encontrados. Ejecuta primero **entrenar_modelo.py**.")
     st.stop()
 
-MAE_MODELO      = info_model["mae_test"] if info_model else 1772
-R2_GBM          = round(info_model["modelos"]["gbm"]["r2"], 3) if info_model else 0.94
-R2_CROSSVAL     = round(info_model.get("r2_crossval", R2_GBM), 3) if info_model else R2_GBM
+MAE_MODELO      = info_model["mae_test"] if info_model else 2531
+R2_PRINCIPAL    = round(info_model["modelos"]["lgbm"]["r2"], 3) if info_model else 0.926
+R2_CROSSVAL     = round(info_model.get("r2_crossval", R2_PRINCIPAL), 3) if info_model else R2_PRINCIPAL
 R2_CV_STD       = round(info_model.get("r2_crossval_std", 0.02), 3) if info_model else 0.02
 N_REGISTROS     = info_model.get("n_registros", len(df)) if info_model else len(df)
 MAPE_FACTOR     = MAE_MODELO / df["precio_eur"].median()
@@ -515,7 +515,7 @@ def _generar_pdf_tasacion(
         pdf.set_font("Helvetica", "I", 7.5)
         pdf.set_text_color(*GRIS_PDF)
         pdf.cell(0, 5,
-            "Estimacion generada por modelo de ML (GBM). No constituye una tasacion oficial. "
+            "Estimacion generada por modelo de ML (LightGBM). No constituye una tasacion oficial. "
             "Verificar siempre el estado real del vehiculo antes de cualquier decision de compra.",
             align="C")
         pdf.set_text_color(*NEGRO)
@@ -606,7 +606,7 @@ def _generar_pdf_tasacion(
     pdf.set_font("Helvetica", "", 8.5)
     pdf.set_text_color(*GRIS_PDF)
     pdf.cell(190, 5,
-        f"Algoritmo GBM (HistGradientBoosting)  |  R2 CV = {R2_CROSSVAL:.3f}  |  MAE = +/-{mae:,} EUR  |  Entrenado con {N_REGISTROS:,} anuncios (Autoscout24)",
+        f"Algoritmo LightGBM  |  R2 CV = {R2_CROSSVAL:.3f}  |  MAE = +/-{mae:,} EUR  |  Entrenado con {N_REGISTROS:,} anuncios (Autoscout24)",
         align="C", ln=True)
     pdf.set_text_color(*NEGRO)
 
@@ -700,7 +700,7 @@ if seccion == SECCIONES[0]:
         <h1 style="font-size:2.2rem;font-weight:800;color:#111827;margin:0 0 8px 0;">🚗 PrecioCoches ML</h1>
         <p style="font-size:1rem;color:#6B7280;max-width:620px;margin:0;">
             Plataforma de análisis del mercado de vehículos de segunda mano en España,
-            impulsada por Gradient Boosting Machine entrenado sobre {N_REGISTROS:,} anuncios reales de Autoscout24.
+            impulsada por LightGBM entrenado sobre {N_REGISTROS:,} anuncios reales de Autoscout24.
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -713,7 +713,7 @@ if seccion == SECCIONES[0]:
              "#0070f3"),
         (s2, f"{R2_CROSSVAL:.3f}",
              "R² validación cruzada",
-             f"R² en validación cruzada 5-fold: {R2_CROSSVAL:.3f} ± {R2_CV_STD:.3f}. El modelo explica el {R2_CROSSVAL*100:.0f}% de la variación de precios (R² test independiente: {R2_GBM:.3f}).",
+             f"R² en validación cruzada 5-fold: {R2_CROSSVAL:.3f} ± {R2_CV_STD:.3f}. El modelo explica el {R2_CROSSVAL*100:.0f}% de la variación de precios (R² test independiente: {R2_PRINCIPAL:.3f}).",
              "#00d084"),
         (s3, f"±{MAE_MODELO:,} €",
              "Error medio (MAE)",
@@ -743,7 +743,7 @@ if seccion == SECCIONES[0]:
             <span class="card-icon">🔍</span>
             <h3>Tasador de precio</h3>
             <p>Introduce las características de un vehículo y obtén una estimación
-               del precio de mercado con el modelo GBM, más coches similares reales.</p>
+               del precio de mercado con el modelo LightGBM, más coches similares reales.</p>
         </div>
         """, unsafe_allow_html=True)
         st.button("Ir al Tasador de precio", key="btn_sec1", use_container_width=True, type="primary", on_click=_navegar, args=(1,))
@@ -786,7 +786,7 @@ if seccion == SECCIONES[0]:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(f"""
     <div class="insight">
-        💡 <b>Sobre el modelo:</b> Se ha entrenado un Gradient Boosting Machine (GBM) sobre {N_REGISTROS:,} anuncios
+        💡 <b>Sobre el modelo:</b> Se ha entrenado un modelo LightGBM sobre {N_REGISTROS:,} anuncios
         reales scrapeados de Autoscout24 (mercado español de segunda mano). Las variables más relevantes son
         el año de fabricación, el kilometraje y la potencia. El modelo alcanza un R² de {R2_CROSSVAL:.3f}
         (validación cruzada 5-fold ± {R2_CV_STD:.3f}) con un error medio absoluto de ±{MAE_MODELO:,} €.
@@ -861,8 +861,8 @@ elif seccion == SECCIONES[1]:
 
             precio = modelo_ml.predict(entrada)[0]
 
-            # Predicciones de todos los modelos (GBM + adicionales)
-            precios_modelos = {"GBM": precio}
+            # Predicciones de todos los modelos (LightGBM + adicionales)
+            precios_modelos = {"LightGBM": precio}
             for _nm, _m in modelos_extra.items():
                 try:
                     precios_modelos[_nm] = _m.predict(entrada)[0]
@@ -929,7 +929,7 @@ elif seccion == SECCIONES[1]:
                 _items_html = ""
                 for _nm, _p in precios_modelos.items():
                     _p_adj = _p * (1 - desc_danos_pct / 100)
-                    _is_main = (_nm == "GBM")
+                    _is_main = (_nm == "LightGBM")
                     _weight = "700" if _is_main else "400"
                     _color  = "#0070f3" if _is_main else "#374151"
                     _items_html += (
@@ -1003,7 +1003,7 @@ elif seccion == SECCIONES[1]:
                     dividido entre el precio mediano del dataset ({int(df['precio_eur'].median()):,} €).
                     Dos vehículos idénticos en papel pueden diferir en precio según estado, historial y negociación.
                 </div>
-                <div class="confidence-badge"><span class="dot"></span> GBM (Gradient Boosting) · R² {R2_CROSSVAL:.3f} (CV) / {R2_GBM:.3f} (test) · MAE ±{MAE_MODELO:,} €</div>
+                <div class="confidence-badge"><span class="dot"></span> LightGBM · R² {R2_CROSSVAL:.3f} (CV) / {R2_PRINCIPAL:.3f} (test) · MAE ±{MAE_MODELO:,} €</div>
                 <br><span class="{clase_diff}">{icono_diff} {abs(diff):,.0f} € {signo} de la mediana de {marca_sel}</span>
                 <br><span style="display:inline-block;margin-top:10px;background:{etq_bg};color:{etq_fg};
                     border-radius:6px;padding:4px 10px;font-size:0.82rem;font-weight:600;">
@@ -1020,13 +1020,13 @@ elif seccion == SECCIONES[1]:
 
             # ── Paleta y conjunto de todos los modelos ─────────────────────────
             _COLORES_MOD = {
-                "GBM":           AZUL,      # #0070f3
+                "LightGBM":      AZUL,      # #0070f3 — modelo principal
                 "Random Forest": NARANJA,   # #f59e0b
                 "XGBoost":       VERDE,     # #00c072
-                "LightGBM":      "#7928ca",
+                "GBM":           "#7928ca",
                 "CatBoost":      ROJO,      # #DC2626
             }
-            _todos_modelos = {"GBM": modelo_ml, **modelos_extra}
+            _todos_modelos = {"LightGBM": modelo_ml, **modelos_extra}
 
             # ── Curva depreciación ─────────────────────────────────────────────
             st.markdown("**Depreciación según la antigüedad — comparativa de modelos**")
@@ -1044,7 +1044,7 @@ elif seccion == SECCIONES[1]:
                     except Exception:
                         _curva.append(None)
                 _edad_preds[_nm_c] = _curva
-            precios_edad = _edad_preds["GBM"]  # GBM usado en PDF
+            precios_edad = _edad_preds["LightGBM"]  # LightGBM usado en PDF
 
             fig1 = go.Figure()
             # Banda de confianza GBM
@@ -1054,18 +1054,18 @@ elif seccion == SECCIONES[1]:
                   [p * (1 - MAPE_FACTOR) for p in precios_edad][::-1],
                 fill="toself", fillcolor="rgba(0,112,243,0.08)",
                 line=dict(color="rgba(0,0,0,0)"),
-                name="Intervalo GBM (±14%)", showlegend=True,
+                name="Intervalo LightGBM (±15%)", showlegend=True,
             ))
             # Traza de cada modelo
             for _nm_c, _curva in _edad_preds.items():
-                _es_gbm = _nm_c == "GBM"
+                _es_main = _nm_c == "LightGBM"
                 _c = _COLORES_MOD.get(_nm_c, "#888")
                 fig1.add_trace(go.Scatter(
                     x=edades_rng, y=_curva,
                     mode="lines",
                     name=_nm_c,
-                    line=dict(color=_c, width=2.8 if _es_gbm else 1.5,
-                              dash="solid" if _es_gbm else "dot"),
+                    line=dict(color=_c, width=2.8 if _es_main else 1.5,
+                              dash="solid" if _es_main else "dot"),
                     hovertemplate=(
                         f"<b>{_nm_c}</b><br>"
                         "%{x} años — <b>%{y:,.0f} €</b><extra></extra>"
@@ -1084,9 +1084,9 @@ elif seccion == SECCIONES[1]:
             )
             st.plotly_chart(fig1, use_container_width=True)
             st.caption(
-                f"Línea continua azul: GBM (modelo principal) · R²={R2_CROSSVAL:.3f} (CV) · MAE ±{MAE_MODELO:,} €. "
+                f"Línea continua azul: LightGBM (modelo principal) · R²={R2_CROSSVAL:.3f} (CV) · MAE ±{MAE_MODELO:,} €. "
                 "Líneas punteadas: modelos alternativos evaluados. "
-                "La banda sombreada es el intervalo de confianza ±14% del GBM. "
+                f"La banda sombreada es el intervalo de confianza ±{round(MAPE_FACTOR*100)}% del LightGBM. "
                 "La convergencia entre curvas indica alta consistencia en la predicción del efecto de la antigüedad."
             )
 
@@ -1108,18 +1108,18 @@ elif seccion == SECCIONES[1]:
                     pd.Series(_curva_km)
                     .rolling(window=7, center=True, min_periods=1).mean().tolist()
                 )
-            precios_km_suave = _km_preds["GBM"]  # GBM usado en PDF
+            precios_km_suave = _km_preds["LightGBM"]  # LightGBM usado en PDF
 
             fig2 = go.Figure()
             for _nm_c, _curva_km in _km_preds.items():
-                _es_gbm = _nm_c == "GBM"
+                _es_main = _nm_c == "LightGBM"
                 _c = _COLORES_MOD.get(_nm_c, "#888")
                 fig2.add_trace(go.Scatter(
                     x=[k / 1000 for k in km_rng], y=_curva_km,
                     mode="lines",
                     name=_nm_c,
-                    line=dict(color=_c, width=2.8 if _es_gbm else 1.5,
-                              dash="solid" if _es_gbm else "dot"),
+                    line=dict(color=_c, width=2.8 if _es_main else 1.5,
+                              dash="solid" if _es_main else "dot"),
                     hovertemplate=(
                         f"<b>{_nm_c}</b><br>"
                         "%{x:.0f}k km — <b>%{y:,.0f} €</b><extra></extra>"
